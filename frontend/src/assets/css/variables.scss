@@ -1,0 +1,43 @@
+// 主题颜色变量
+$primary-color: #4361ee;
+$success-color: #4cc9f0;
+$warning-color: #f72585;
+$danger-color: #f15bb5;
+$info-color: #4895ef;
+
+// 文字颜色
+$main-font-color: #2b2d42;
+$regular-font-color: #4a4e69;
+$secondary-font-color: #6c757d;
+$placeholder-font-color: #9a9ea3;
+
+// 边框颜色
+$border-color: #dee2e6;
+$border-light-color: #e9ecef;
+$border-lighter-color: #f8f9fa;
+
+// 背景颜色
+$background-color: #f8f9fa;
+
+// 布局相关
+$header-height: 64px;
+$sidebar-width: 240px;
+$sidebar-collapsed-width: 64px;
+
+// 响应式断点
+$sm: 768px;
+$md: 992px;
+$lg: 1200px;
+$xl: 1920px;
+
+// 阴影
+$box-shadow-base: 0 4px 12px rgba(0, 0, 0, 0.08), 0 0 8px rgba(0, 0, 0, 0.05);
+$box-shadow-light: 0 6px 16px 0 rgba(0, 0, 0, 0.08);
+
+// 圆角
+$border-radius-small: 4px;
+$border-radius-base: 8px;
+$border-radius-large: 12px;
+
+// 过渡
+$transition-base: all 0.3s ease-in-out; 

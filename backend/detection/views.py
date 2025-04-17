@@ -1,0 +1,161 @@
+"""
+检测应用视图
+"""
+import logging
+from django.db.models import Count, Avg, Q, F, Sum, Case, When, Value, IntegerField
+from django.utils import timezone
+from rest_framework import viewsets, permissions, status
+from rest_framework.decorators import action
+from rest_framework.response import Response
+from .models import Detection
+from .serializers import (
+    DetectionSerializer, DetectionCreateSerializer, 
+    DetectionResultSerializer, DetectionStatSerializer
+)
+from .services.detector import FakeNewsDetector
+
+logger = logging.getLogger(__name__)
+
+class IsOwnerOrReadOnly(permissions.BasePermission):
+    """
+    对象级权限，只允许对象的所有者编辑
+    """
+    def has_object_permission(self, request, view, obj):
+        # 读取权限允许任何请求
+        if request.method in permissions.SAFE_METHODS:
+            return True
+        
+        # 写入权限只允许对象的所有者
+        return obj.user == request.user
+
+class DetectionViewSet(viewsets.ModelViewSet):
+    """
+    检测记录视图集
+    """
+    queryset = Detection.objects.all()
+    serializer_class = DetectionSerializer
+    permission_classes = [permissions.IsAuthenticated, IsOwnerOrReadOnly]
+    
+    def get_queryset(self):
+        """
+        根据用户过滤检测记录
+        """
+        user = self.request.user
+        # 管理员可以查看所有记录，普通用户只能查看自己的记录
+        if user.is_staff:
+            return Detection.objects.all()
+        return Detection.objects.filter(user=user)
+    
+    def get_serializer_class(self):
+        """
+        根据不同操作返回不同的序列化器
+        """
+        if self.action == 'create':
+            return DetectionCreateSerializer
+        if self.action == 'get_stats':
+            return DetectionStatSerializer
+        return DetectionSerializer
+    
+    def perform_create(self, serializer):
+        """
+        创建检测记录时设置用户
+        """
+        detection = serializer.save(user=self.request.user)
+        
+        # 启动异步检测任务
+        # 在实际生产环境中，应该使用Celery等异步任务队列
+        # 这里为了简化直接在请求中执行
+        try:
+            detector = FakeNewsDetector(detection.id)
+            detector.detect()
+        except Exception as e:
+            logger.exception(f"检测任务启动失败: {str(e)}")
+            detection.status = Detection.STATUS_FAILED
+            detection.error_message = f"检测任务启动失败: {str(e)}"
+            detection.save()
+    
+    @action(detail=True, methods=['get'])
+    def result(self, request, pk=None):
+        """
+        获取检测结果
+        """
+        detection = self.get_object()
+        serializer = DetectionResultSerializer(detection)
+        return Response(serializer.data)
+    
+    @action(detail=False, methods=['get'])
+    def my_detections(self, request):
+        """
+        获取当前用户的所有检测记录
+        """
+        detections = Detection.objects.filter(user=request.user).order_by('-created_at')
+        page = self.paginate_queryset(detections)
+        if page is not None:
+            serializer = self.get_serializer(page, many=True)
+            return self.get_paginated_response(serializer.data)
+        
+        serializer = self.get_serializer(detections, many=True)
+        return Response(serializer.data)
+    
+    @action(detail=False, methods=['get'])
+    def get_stats(self, request):
+        """
+        获取检测统计信息
+        """
+        user = request.user
+        
+        # 确定统计范围
+        if user.is_staff and request.query_params.get('all') == 'true':
+            # 管理员可以查看所有统计
+            detections = Detection.objects.all()
+        else:
+            # 普通用户只能查看自己的统计
+            detections = Detection.objects.filter(user=user)
+        
+        # 计算基本统计量
+        total_count = detections.count()
+        
+        # 如果没有检测记录，返回空统计
+        if total_count == 0:
+            return Response({
+                'total_count': 0,
+                'fake_count': 0,
+                'real_count': 0,
+                'pending_count': 0,
+                'completed_count': 0,
+                'failed_count': 0,
+                'fake_percentage': 0,
+                'real_percentage': 0,
+                'average_confidence': 0
+            })
+        
+        # 计算各类型数量
+        fake_count = detections.filter(result=Detection.RESULT_FAKE).count()
+        real_count = detections.filter(result=Detection.RESULT_REAL).count()
+        pending_count = detections.filter(status=Detection.STATUS_PENDING).count()
+        completed_count = detections.filter(status=Detection.STATUS_COMPLETED).count()
+        failed_count = detections.filter(status=Detection.STATUS_FAILED).count()
+        
+        # 计算百分比
+        fake_percentage = (fake_count / total_count) * 100 if total_count > 0 else 0
+        real_percentage = (real_count / total_count) * 100 if total_count > 0 else 0
+        
+        # 计算平均置信度
+        avg_confidence = detections.filter(
+            status=Detection.STATUS_COMPLETED
+        ).aggregate(avg=Avg('confidence_score'))['avg'] or 0
+        
+        # 构建统计响应
+        stats = {
+            'total_count': total_count,
+            'fake_count': fake_count,
+            'real_count': real_count,
+            'pending_count': pending_count,
+            'completed_count': completed_count,
+            'failed_count': failed_count,
+            'fake_percentage': fake_percentage,
+            'real_percentage': real_percentage,
+            'average_confidence': avg_confidence
+        }
+        
+        return Response(stats)

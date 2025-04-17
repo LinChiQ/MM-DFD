@@ -1,0 +1,38 @@
+# Web框架
+Django==4.2.9
+djangorestframework==3.14.0
+djangorestframework-simplejwt==5.3.1
+django-cors-headers==4.3.1
+django-filter==23.5
+drf-yasg==1.21.7
+
+# 数据库
+mysqlclient==2.2.1
+pymysql==1.1.0
+
+# 深度学习
+torch==2.5.0
+torchvision==0.20.0
+torchaudio==2.5.0
+transformers==4.39.0
+timm==0.9.12
+pillow==10.2.0
+numpy==1.26.4
+pandas==2.2.1
+scikit-learn==1.6.1
+
+# 数据处理
+matplotlib==3.8.2
+seaborn==0.13.1
+
+# 图像处理
+opencv-python==4.8.1.78
+
+# API工具
+requests==2.31.0
+pydantic==2.5.3
+
+# 工具库
+tqdm==4.66.1
+python-dotenv==1.0.1
+gunicorn==21.2.0
