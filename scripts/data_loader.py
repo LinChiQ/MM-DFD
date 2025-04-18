@@ -194,16 +194,34 @@ def get_tokenizer(model_name=TEXT_MODEL_NAME):
     tokenizer = AutoTokenizer.from_pretrained(model_name)
     return tokenizer
 
-def get_image_transforms(input_size=IMAGE_MODEL_INPUT_SIZE, mean=IMG_MEAN, std=IMG_STD):
+def get_image_transforms(input_size=IMAGE_MODEL_INPUT_SIZE, mean=IMG_MEAN, std=IMG_STD, augment=False):
     """Defines and returns the image transformations."""
     logging.info("Defining image transforms...")
     # Basic transforms for inference/validation. Add data augmentation for training if needed.
-    transform = transforms.Compose([
-        transforms.Resize((input_size, input_size)),
+    size = (input_size, input_size) if isinstance(input_size, int) else input_size
+
+    # Standard transforms (Resize, ToTensor, Normalize)
+    base_transforms = [
+        transforms.Resize(size),
         transforms.ToTensor(), # Converts PIL image to tensor and scales pixels to [0, 1]
         transforms.Normalize(mean=mean, std=std) # Normalize using pre-trained model stats
-    ])
-    return transform
+    ]
+
+    if augment:
+        # Add augmentation transforms before ToTensor and Normalize
+        augmentation_transforms = [
+            transforms.RandomHorizontalFlip(),
+            # Add more augmentations as needed, e.g.:
+            # transforms.RandomRotation(10),
+            # transforms.ColorJitter(brightness=0.1, contrast=0.1, saturation=0.1, hue=0.1),
+        ]
+        # Combine augmentations with base transforms
+        transform_list = augmentation_transforms + base_transforms
+    else:
+        # Use only base transforms for validation/testing
+        transform_list = base_transforms
+
+    return transforms.Compose(transform_list)
 
 def get_metadata_scaler(csv_path, metadata_cols):
     """

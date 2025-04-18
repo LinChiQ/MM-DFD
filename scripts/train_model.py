@@ -7,6 +7,7 @@ import torch
 import torch.nn as nn
 import torch.optim as optim
 from torch.utils.data import DataLoader, Subset
+from torch.optim.lr_scheduler import ReduceLROnPlateau
 from torchvision.models import resnet50, ResNet50_Weights
 from transformers import AutoModel, AutoTokenizer
 from sklearn.model_selection import train_test_split
@@ -16,6 +17,7 @@ from pathlib import Path
 import logging
 import time
 import joblib # For saving the scaler
+from tqdm import tqdm # Import tqdm
 
 # Import the custom Dataset from data_loader.py
 from data_loader import MultimodalFakeNewsDataset, get_tokenizer, get_image_transforms
@@ -46,7 +48,7 @@ METADATA_EMBEDDING_DIM = 64 # Example dimension for MLP output
 FUSION_OUTPUT_DIM = 256 # Example dimension after fusion
 
 # Training Hyperparameters (Adjust as needed)
-EPOCHS = 10
+EPOCHS = 20 # Increase epochs slightly to allow for early stopping
 BATCH_SIZE = 32 # Adjust based on GPU memory
 LEARNING_RATE_ENCODERS = 1e-5 # Lower LR for pre-trained encoders
 LEARNING_RATE_HEAD = 1e-4 # Higher LR for newly added layers
@@ -54,6 +56,9 @@ WEIGHT_DECAY = 0.01
 VALIDATION_SPLIT = 0.15 # Use 15% of data for validation
 TEST_SPLIT = 0.15 # Use 15% of data for testing
 RANDOM_SEED = 42
+EARLY_STOPPING_PATIENCE = 3 # Number of epochs to wait for improvement before stopping
+LR_SCHEDULER_PATIENCE = 1 # Number of epochs to wait for improvement before reducing LR
+LR_SCHEDULER_FACTOR = 0.1 # Factor by which the learning rate will be reduced
 
 # --- Model Definition ---
 
@@ -63,7 +68,7 @@ class MetadataEncoder(nn.Module):
         super().__init__()
         self.fc1 = nn.Linear(input_dim, input_dim * 2)
         self.relu = nn.ReLU()
-        self.dropout = nn.Dropout(0.3)
+        self.dropout = nn.Dropout(0.4) # Increased dropout rate
         self.fc2 = nn.Linear(input_dim * 2, output_dim)
 
     def forward(self, x):
@@ -126,7 +131,7 @@ class MultimodalFakeNewsModel(nn.Module):
         self.fusion_layer = nn.Sequential(
             nn.Linear(self.fusion_dim, fusion_output_dim),
             nn.ReLU(),
-            nn.Dropout(0.4)
+            nn.Dropout(0.5) # Increased dropout rate
         )
 
         # Classifier Head
@@ -165,7 +170,7 @@ class MultimodalFakeNewsModel(nn.Module):
 
 # --- Training and Evaluation Functions ---
 
-def train_epoch(model, data_loader, loss_fn, optimizer, device, scheduler=None):
+def train_epoch(model, data_loader, loss_fn, optimizer, device): # Removed scheduler argument for now
     """ Trains the model for one epoch. """
     model.train()
     total_loss = 0
@@ -190,8 +195,9 @@ def train_epoch(model, data_loader, loss_fn, optimizer, device, scheduler=None):
         # Backward pass and optimize
         loss.backward()
         optimizer.step()
-        if scheduler:
-            scheduler.step() # Optional: learning rate scheduler
+        # Remove scheduler step from here if using ReduceLROnPlateau
+        # if scheduler:
+        #     scheduler.step() # Optional: learning rate scheduler
 
         total_loss += loss.item()
 
@@ -246,7 +252,8 @@ def evaluate_epoch(model, data_loader, loss_fn, device):
 
 
     logging.info(f"Eval Summary: Avg Loss: {avg_loss:.4f}, Accuracy: {accuracy:.4f}, Precision: {precision:.4f}, Recall: {recall:.4f}, F1: {f1:.4f}, AUC: {auc:.4f}")
-    return avg_loss, f1, auc
+    # Return all metrics
+    return avg_loss, accuracy, precision, recall, f1, auc
 
 # --- Main Training Orchestration ---
 
@@ -295,35 +302,42 @@ def main():
              val_df[col] = 0
              test_df[col] = 0
          else:
+             # Ensure conversion to numeric before filling NaN
              train_df[col] = pd.to_numeric(train_df[col], errors='coerce').fillna(0)
              val_df[col] = pd.to_numeric(val_df[col], errors='coerce').fillna(0)
              test_df[col] = pd.to_numeric(test_df[col], errors='coerce').fillna(0)
-             
+
     try:
         metadata_scaler.fit(train_df[METADATA_COLS])
         joblib.dump(metadata_scaler, SCALER_PATH) # Save the fitted scaler
         logging.info(f"Metadata scaler fitted and saved to {SCALER_PATH}")
+    except ValueError as e:
+        logging.error(f"FATAL: Error fitting scaler. Check if all metadata columns contain valid numeric data after processing. Error: {e}")
+        return
     except Exception as e:
          logging.error(f"FATAL: Error fitting or saving scaler: {e}")
          return
+
 
     # 3. Setup Datasets and DataLoaders
     logging.info("Creating Datasets and DataLoaders...")
     tokenizer = get_tokenizer(TEXT_MODEL_NAME)
     # Use basic transforms for now, add augmentation for training later
-    image_transform = get_image_transforms(input_size=IMAGE_MODEL_INPUT_SIZE)
+    # Consider adding image augmentation for the training set here
+    image_transform = get_image_transforms(input_size=IMAGE_MODEL_INPUT_SIZE) # Same transform for val/test
+    train_image_transform = get_image_transforms(input_size=IMAGE_MODEL_INPUT_SIZE, augment=True) # Add augment=True flag for training transforms
 
     try:
         # Create datasets for each split, passing the FITTED scaler
-        # We need to re-create the DataFrames for the Dataset class to read them cleanly
-        train_dataset = MultimodalFakeNewsDataset(train_df, DATA_DIR, tokenizer, image_transform, MAX_TEXT_LEN, METADATA_COLS, metadata_scaler)
+        # Use augmented transforms for training dataset
+        train_dataset = MultimodalFakeNewsDataset(train_df, DATA_DIR, tokenizer, train_image_transform, MAX_TEXT_LEN, METADATA_COLS, metadata_scaler)
         val_dataset = MultimodalFakeNewsDataset(val_df, DATA_DIR, tokenizer, image_transform, MAX_TEXT_LEN, METADATA_COLS, metadata_scaler)
         test_dataset = MultimodalFakeNewsDataset(test_df, DATA_DIR, tokenizer, image_transform, MAX_TEXT_LEN, METADATA_COLS, metadata_scaler)
 
         # Create DataLoaders
-        train_loader = DataLoader(train_dataset, batch_size=BATCH_SIZE, shuffle=True, num_workers=2)
-        val_loader = DataLoader(val_dataset, batch_size=BATCH_SIZE, shuffle=False, num_workers=2)
-        test_loader = DataLoader(test_dataset, batch_size=BATCH_SIZE, shuffle=False, num_workers=2)
+        train_loader = DataLoader(train_dataset, batch_size=BATCH_SIZE, shuffle=True, num_workers=2, pin_memory=True) # Added pin_memory
+        val_loader = DataLoader(val_dataset, batch_size=BATCH_SIZE, shuffle=False, num_workers=2, pin_memory=True)
+        test_loader = DataLoader(test_dataset, batch_size=BATCH_SIZE, shuffle=False, num_workers=2, pin_memory=True)
         logging.info("DataLoaders created.")
     except Exception as e:
          logging.error(f"FATAL: Error creating Datasets or DataLoaders: {e}", exc_info=True)
@@ -357,38 +371,62 @@ def main():
     # Loss function
     loss_fn = nn.BCEWithLogitsLoss()
 
-    # 5. Training Loop
+    # Learning Rate Scheduler (Optional but Recommended)
+    scheduler = ReduceLROnPlateau(optimizer, mode='max', factor=LR_SCHEDULER_FACTOR, patience=LR_SCHEDULER_PATIENCE, verbose=True)
+
+    # 5. Training Loop with Early Stopping
     logging.info("--- Starting Training Loop ---")
     best_val_f1 = -1.0
+    epochs_no_improve = 0
+    best_epoch = 0 # Track the epoch of the best model
 
     for epoch in range(EPOCHS):
         epoch_start_time = time.time()
         logging.info(f"Epoch {epoch + 1}/{EPOCHS}")
 
         train_loss, train_f1 = train_epoch(model, train_loader, loss_fn, optimizer, device)
-        val_loss, val_f1, val_auc = evaluate_epoch(model, val_loader, loss_fn, device)
+        val_loss, val_acc, val_prec, val_rec, val_f1, val_auc = evaluate_epoch(model, val_loader, loss_fn, device)
 
         epoch_duration = time.time() - epoch_start_time
         logging.info(f"Epoch {epoch + 1} duration: {epoch_duration:.2f} seconds")
 
-        # Save best model based on validation F1 score
+        # Learning rate scheduler step (based on validation F1)
+        scheduler.step(val_f1)
+
+        # Early Stopping Check and Save Best Model
         if val_f1 > best_val_f1:
             best_val_f1 = val_f1
+            best_epoch = epoch + 1
             torch.save(model.state_dict(), BEST_MODEL_PATH)
-            logging.info(f"*** New best model saved with Val F1: {best_val_f1:.4f} at epoch {epoch + 1} ***")
+            logging.info(f"*** New best model saved with Val F1: {best_val_f1:.4f} at epoch {best_epoch} ***")
+            epochs_no_improve = 0 # Reset counter
+        else:
+            epochs_no_improve += 1
+            logging.info(f"Validation F1 did not improve for {epochs_no_improve} epoch(s). Current best F1: {best_val_f1:.4f} at epoch {best_epoch}.")
+
+        if epochs_no_improve >= EARLY_STOPPING_PATIENCE:
+            logging.info(f"--- Early stopping triggered after {epoch + 1} epochs. ---")
+            break # Exit the training loop
 
     logging.info("--- Training Finished ---")
 
     # 6. Final Evaluation on Test Set
-    logging.info("--- Evaluating on Test Set ---")
+    logging.info("--- Evaluating on Test Set using Best Model ---")
     try:
-        # Load the best model weights
-        model.load_state_dict(torch.load(BEST_MODEL_PATH))
-        logging.info(f"Loaded best model from {BEST_MODEL_PATH} (Val F1: {best_val_f1:.4f})")
-        test_loss, test_f1, test_auc = evaluate_epoch(model, test_loader, loss_fn, device)
-        logging.info(f"Test Set Performance: Loss: {test_loss:.4f}, F1: {test_f1:.4f}, AUC: {test_auc:.4f}")
-    except FileNotFoundError:
-         logging.error(f"Could not load best model from {BEST_MODEL_PATH} for final testing.")
+        # Load the best model weights saved during training
+        if os.path.exists(BEST_MODEL_PATH):
+            model.load_state_dict(torch.load(BEST_MODEL_PATH))
+            logging.info(f"Loaded best model from epoch {best_epoch} ({BEST_MODEL_PATH}) with Val F1: {best_val_f1:.4f}")
+            # Receive all metrics from evaluate_epoch
+            test_loss, test_acc, test_prec, test_rec, test_f1, test_auc = evaluate_epoch(model, test_loader, loss_fn, device)
+            # Log all received metrics
+            logging.info(f"Test Set Performance: Loss: {test_loss:.4f}, Accuracy: {test_acc:.4f}, Precision: {test_prec:.4f}, Recall: {test_rec:.4f}, F1: {test_f1:.4f}, AUC: {test_auc:.4f}")
+        else:
+             logging.error(f"Could not find best model at {BEST_MODEL_PATH} for final testing. Evaluating with the model from the last epoch.")
+             # Optionally evaluate with the model state at the end of the loop
+             test_loss, test_acc, test_prec, test_rec, test_f1, test_auc = evaluate_epoch(model, test_loader, loss_fn, device)
+             logging.info(f"Test Set Performance (last epoch model): Loss: {test_loss:.4f}, Accuracy: {test_acc:.4f}, Precision: {test_prec:.4f}, Recall: {test_rec:.4f}, F1: {test_f1:.4f}, AUC: {test_auc:.4f}")
+
     except Exception as e:
          logging.error(f"Error during final test evaluation: {e}")
 

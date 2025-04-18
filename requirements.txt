@@ -11,9 +11,10 @@ mysqlclient==2.2.1
 pymysql==1.1.0
 
 # 深度学习
-torch==2.5.0
-torchvision==0.20.0
-torchaudio==2.5.0
+# Please Install Pytorch with the instruction of https://pytorch.org/ if cuda is installed.
+# torch==2.5.0
+# torchvision==0.20.0
+# torchaudio==2.5.0
 transformers==4.39.0
 timm==0.9.12
 pillow==10.2.0
