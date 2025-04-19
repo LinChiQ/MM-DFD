@@ -14,6 +14,14 @@ class User(AbstractUser):
     avatar = models.ImageField(_('头像'), upload_to='avatars/', blank=True, null=True)
     bio = models.TextField(_('个人简介'), blank=True, null=True)
     
+    # 管理员相关字段
+    is_admin = models.BooleanField(_('管理员'), default=False)
+    admin_role = models.CharField(_('管理员角色'), max_length=20, choices=[
+        ('super', _('超级管理员')),
+        ('content', _('内容管理员')),
+        ('user', _('用户管理员'))
+    ], blank=True, null=True)
+    
     # 用于记录检测历史统计
     total_detections = models.PositiveIntegerField(_('检测总次数'), default=0)
     fake_detections = models.PositiveIntegerField(_('虚假新闻检测次数'), default=0)

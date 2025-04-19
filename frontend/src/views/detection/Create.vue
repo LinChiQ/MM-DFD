@@ -87,6 +87,8 @@
 </template>
 
 <script>
+import axios from 'axios'
+
 export default {
   name: 'DetectionCreate',
   data() {
@@ -138,12 +140,23 @@ export default {
         if (valid) {
           this.loading = true
           
-          // 调用检测API
-          this.$store.dispatch('detection/createDetection', this.detectionForm)
+          const formData = new FormData();
+          formData.append('title', this.detectionForm.title);
+          formData.append('content', this.detectionForm.content);
+          
+          if (this.detectionForm.image) {
+            formData.append('image', this.detectionForm.image);
+          }
+          
+          axios.post('/detection/detections/', formData, {
+            headers: {
+              'Content-Type': 'multipart/form-data'
+            }
+          })
             .then(response => {
               this.$message.success('检测任务已提交')
               // 修正：跳转到包含父路径的完整路由
-              this.$router.push(`/dashboard/detection/detail/${response.id}`)
+              this.$router.push(`/dashboard/detection/detail/${response.data.id}`)
             })
             .catch(error => {
               console.error('检测提交失败:', error)

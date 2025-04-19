@@ -44,6 +44,9 @@
               <el-dropdown-item command="profile">
                 <i class="el-icon-user-solid"></i> 个人中心
               </el-dropdown-item>
+              <el-dropdown-item v-if="isAdmin" command="admin">
+                <i class="el-icon-s-tools"></i> 管理控制台
+              </el-dropdown-item>
               <el-dropdown-item command="logout">
                 <i class="el-icon-switch-button"></i> 退出登录
               </el-dropdown-item>
@@ -96,6 +99,9 @@ export default {
     username() {
       return this.user.username || '用户'
     },
+    isAdmin() {
+      return this.user.is_staff === true
+    },
     logoSrc() {
       try {
         return require('@/assets/logo.svg')
@@ -113,6 +119,8 @@ export default {
         this.$store.dispatch('user/logout')
       } else if (command === 'profile') {
         this.$router.push('/dashboard/profile')
+      } else if (command === 'admin') {
+        this.$router.replace('/admin/dashboard')
       }
     },
     handleResize() {

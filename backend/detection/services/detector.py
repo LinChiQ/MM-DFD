@@ -18,6 +18,9 @@ from .llm_verifier import verify_news_with_llms_async # Import the async LLM ver
 from ..ml.model import MultimodalFakeNewsModel # Import your model definition
 from ..ml.data_utils import get_tokenizer, get_image_transforms, preprocess_input # Import utils
 
+# 导入SystemSettings模型
+from settings.models import SystemSettings
+
 logger = logging.getLogger(__name__)
 
 class FakeNewsDetector:
@@ -49,8 +52,9 @@ class FakeNewsDetector:
              self.model.to(self.device)
              self.model.eval() # Set model to evaluation mode
 
-        # 加载元数据Scaler
-        self.scaler = self._load_scaler()
+        # 移除加载元数据Scaler
+        # self.scaler = self._load_scaler()
+        self.scaler = None # Explicitly set to None
 
         # 加载Tokenizer和图像变换
         self.tokenizer = get_tokenizer()
@@ -75,20 +79,6 @@ class FakeNewsDetector:
             logger.exception(f"加载自训练模型失败 {model_path}: {e}")
             return None
 
-    def _load_scaler(self):
-        """ 加载 Scikit-learn Scaler """
-        scaler_path = settings.SCALER_PATH
-        if not Path(scaler_path).exists():
-            logger.warning(f"元数据scaler文件未找到: {scaler_path}. 将不使用scaler。")
-            return None
-        try:
-            scaler = joblib.load(scaler_path)
-            logger.info(f"元数据scaler加载成功: {scaler_path}")
-            return scaler
-        except Exception as e:
-            logger.exception(f"加载元数据scaler失败 {scaler_path}: {e}")
-            return None
-
     def _update_status(self, status, error_message=None):
         """ 更新检测记录的状态 """
         self.detection.status = status
@@ -98,10 +88,10 @@ class FakeNewsDetector:
             self.detection.completed_at = timezone.now()
         elif status == Detection.STATUS_FAILED:
              self.detection.completed_at = timezone.now() # Mark completion time even on failure
-
+        
         self.detection.save()
         logger.info(f"Detection {self.detection_id} status updated to {status}.")
-
+    
     def detect(self):
         """
         执行检测流程:
@@ -130,8 +120,8 @@ class FakeNewsDetector:
 
         # --- 1. 自训练模型预测 --- #
         local_model_result = {
-            'result': Detection.RESULT_UNKNOWN,
-            'confidence': 0.0,
+                'result': Detection.RESULT_UNKNOWN,
+                'confidence': 0.0,
             'error': None
         }
         if self.model:
@@ -142,13 +132,17 @@ class FakeNewsDetector:
                     image_path=image_path,
                     tokenizer=self.tokenizer,
                     image_transform=self.image_transform,
-                    scaler=self.scaler, # Pass the loaded scaler
+                    # scaler=self.scaler, # 移除 scaler 参数
                     device=self.device
                 )
 
                 # 模型推理
                 with torch.no_grad():
-                    logits = self.model(**processed_input)
+                    # 调用模型时移除 metadata
+                    logits = self.model(input_ids=processed_input['input_ids'], 
+                                         attention_mask=processed_input['attention_mask'], 
+                                         image=processed_input['image'], 
+                                         image_available=processed_input['image_available'])
                     probability = torch.sigmoid(logits).item() # 获取概率值 (0-1)
 
                 # 结果转换
@@ -216,9 +210,26 @@ class FakeNewsDetector:
         local_error = local_model_result.get('error')
         llm_error = llm_result.get('error')
         
-        # --- 定义权重 (可以根据实际效果调整) ---
-        LOCAL_MODEL_WEIGHT = 0.4 
-        LLM_WEIGHT = 0.6
+        # --- 从数据库获取模型权重 ---
+        # 定义设置键名和默认值
+        LOCAL_MODEL_WEIGHT_KEY = 'local_model_weight'
+        LLM_WEIGHT_KEY = 'llm_weight'
+        FAKE_THRESHOLD_KEY = 'fake_threshold'
+        REAL_THRESHOLD_KEY = 'real_threshold'
+        
+        DEFAULT_LOCAL_MODEL_WEIGHT = 0.4
+        DEFAULT_LLM_WEIGHT = 0.6
+        DEFAULT_FAKE_THRESHOLD = 0.65
+        DEFAULT_REAL_THRESHOLD = 0.35
+        
+        # 从数据库获取设置，如果不存在则使用默认值
+        LOCAL_MODEL_WEIGHT = SystemSettings.get_value(LOCAL_MODEL_WEIGHT_KEY, DEFAULT_LOCAL_MODEL_WEIGHT)
+        LLM_WEIGHT = SystemSettings.get_value(LLM_WEIGHT_KEY, DEFAULT_LLM_WEIGHT)
+        FAKE_THRESHOLD = SystemSettings.get_value(FAKE_THRESHOLD_KEY, DEFAULT_FAKE_THRESHOLD)
+        REAL_THRESHOLD = SystemSettings.get_value(REAL_THRESHOLD_KEY, DEFAULT_REAL_THRESHOLD)
+        
+        logger.info(f"使用模型权重设置: 本地模型={LOCAL_MODEL_WEIGHT}, LLM={LLM_WEIGHT}, " 
+                   f"虚假阈值={FAKE_THRESHOLD}, 真实阈值={REAL_THRESHOLD}")
         
         # --- 数值化判断结果 (Real=0, Fake=1, Unknown=0.5) ---
         def verdict_to_score(verdict_str):
@@ -251,18 +262,18 @@ class FakeNewsDetector:
             weighted_confidence = ((local_conf * effective_local_weight) + 
                                 (llm_conf * effective_llm_weight)) / total_weight
 
-            # 根据加权分数决定最终结果
-            if weighted_score >= 0.65:
+            # 根据加权分数和阈值决定最终结果
+            if weighted_score >= FAKE_THRESHOLD:
                 final_result = Detection.RESULT_FAKE
                 final_confidence = 0.5 + (weighted_score - 0.5) 
                 final_confidence = final_confidence * weighted_confidence 
-            elif weighted_score <= 0.35:
+            elif weighted_score <= REAL_THRESHOLD:
                 final_result = Detection.RESULT_REAL
                 final_confidence = 0.5 + (0.5 - weighted_score)
                 final_confidence = final_confidence * weighted_confidence
             else:
                 final_result = Detection.RESULT_UNKNOWN
-                final_confidence = (1.0 - abs(weighted_score - 0.5) * 2) * weighted_confidence
+                final_confidence = 0.0  # 对于未知结果，置信度始终为0
             
             fusion_strategy = f"Weighted Average (Both Active - Local W: {effective_local_weight:.2f}, LLM W: {effective_llm_weight:.2f}), Score: {weighted_score:.3f}"
             fusion_details = [
@@ -298,7 +309,7 @@ class FakeNewsDetector:
             # Case 4: 两个模型都无效/不确定
             fusion_strategy = "Both Models Failed/Unknown/Uncertain"
             final_result = Detection.RESULT_UNKNOWN
-            final_confidence = 0.0
+            final_confidence = 0.0  # 对于未知结果，置信度始终为0
             fusion_details = [
                 f"Local model inactive (Error: {local_error}, Verdict: {local_verdict})",
                 f"LLM inactive/uncertain (Error: {llm_error}, Mapped Verdict: {llm_verdict_mapped}, Raw: {llm_overall_verdict_str})"
@@ -331,7 +342,7 @@ class FakeNewsDetector:
 
         end_time = time.time()
         logger.info(f"--- 检测完成 ID: {self.detection_id} (耗时: {end_time - start_time:.2f} 秒) ---")
-
+        
         return {
             'result': final_result,
             'confidence': final_confidence,

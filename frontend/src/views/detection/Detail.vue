@@ -34,6 +34,27 @@
                 <p>{{ detection.content }}</p>
               </div>
             </div>
+
+            <!-- LLM交叉验证结果 -->
+            <div class="llm-results-section" v-if="detection.status === 'completed' && llmIndividualResults.length > 0">
+              <el-divider content-position="left">LLM 交叉验证结果</el-divider>
+              <el-table :data="llmIndividualResults" size="medium" border stripe style="width: 100%">
+                <el-table-column prop="model" label="模型" width="160" show-overflow-tooltip></el-table-column>
+                <el-table-column prop="verdict" label="判断" width="90" align="center">
+                  <template slot-scope="scope">
+                    <el-tag :type="getLlmVerdictType(scope.row.verdict)" size="small">{{ scope.row.verdict }}</el-tag>
+                  </template>
+                </el-table-column>
+                <el-table-column prop="confidence" label="置信度" width="80" align="center">
+                  <template slot-scope="scope">
+                    <span v-if="scope.row.confidence">{{ (scope.row.confidence * 100).toFixed(1) }}%</span>
+                    <span v-else>-</span>
+                  </template>
+                </el-table-column>
+                <el-table-column prop="reason" label="理由" show-overflow-tooltip></el-table-column>
+                <el-table-column prop="error" label="错误" width="100" show-overflow-tooltip></el-table-column>
+              </el-table>
+            </div>
           </el-card>
         </el-col>
         
@@ -55,9 +76,11 @@
                 <div class="result-label">最终置信度</div>
                 <div class="result-value">
                   <el-progress 
+                    v-if="getResultType !== 'info'"
                     :percentage="getConfidenceValue" 
                     :color="getResultType === 'danger' ? '#F56C6C' : '#67C23A'">
                   </el-progress>
+                  <span v-else>不适用</span>
                 </div>
               </div>
 
@@ -66,10 +89,13 @@
                   <div class="analysis-section" v-if="analysisDetails.fusion">
                     <h4><i class="el-icon-connection"></i> 融合策略</h4>
                     <p>策略: {{ analysisDetails.fusion.strategy || '未知' }}</p>
+                    <p v-if="analysisDetails.fusion.final_verdict !== 'unknown'">
+                      置信度: {{ (analysisDetails.fusion.final_confidence * 100).toFixed(2) }}%
+                    </p>
                   </div>
 
                   <div class="analysis-section" v-if="analysisDetails.local_model">
-                    <h4><i class="el-icon-cpu"></i> 本地模型分析</h4>
+                    <h4><i class="el-icon-cpu"></i> 本地模型概要</h4>
                     <p>结果: 
                       <el-tag 
                         :type="getVerdictType(analysisDetails.local_model.result)" 
@@ -78,7 +104,7 @@
                         {{ getVerdictText(analysisDetails.local_model.result) }}
                       </el-tag>
                     </p>
-                    <p>置信度: {{ (analysisDetails.local_model.confidence * 100).toFixed(2) }}%</p>
+                    <p v-if="analysisDetails.local_model.result !== 'unknown'">置信度: {{ (analysisDetails.local_model.confidence * 100).toFixed(2) }}%</p>
                     <p v-if="analysisDetails.local_model.error">错误: {{ analysisDetails.local_model.error }}</p>
                   </div>
 
@@ -95,10 +121,6 @@
                     <p>综合置信度: {{ (analysisDetails.llm_verification.aggregated_confidence * 100).toFixed(2) }}%</p>
                     <p v-if="analysisDetails.llm_verification.needs_manual_review" style="color: orange;"><i class="el-icon-warning-outline"></i> 需要人工审核</p>
                     <p v-if="analysisDetails.llm_verification.error">错误: {{ analysisDetails.llm_verification.error }}</p>
-                    
-                    <div v-if="llmIndividualResults.length > 0" style="margin-top: 10px;">
-                       <el-button type="text" @click="llmDetailsDialogVisible = true">查看各模型详细结果</el-button>
-                    </div>
                   </div>
                 </el-collapse-item>
               </el-collapse>
@@ -140,36 +162,12 @@
         <el-button type="primary" @click="goToHistory">返回历史记录</el-button>
       </div>
     </div>
-
-    <el-dialog
-      title="LLM 交叉验证详细结果"
-      :visible.sync="llmDetailsDialogVisible"
-      width="70%"
-      top="5vh" 
-    >
-      <el-table :data="llmIndividualResults" size="medium" border stripe style="width: 100%">
-        <el-table-column prop="model" label="模型" width="200" show-overflow-tooltip></el-table-column>
-        <el-table-column prop="verdict" label="判断" width="110" align="center">
-          <template slot-scope="scope">
-            <el-tag :type="getLlmVerdictType(scope.row.verdict)" size="small">{{ scope.row.verdict }}</el-tag>
-          </template>
-        </el-table-column>
-        <el-table-column prop="confidence" label="置信度" width="90" align="center">
-           <template slot-scope="scope">
-             {{ (scope.row.confidence * 100).toFixed(1) }}%
-           </template>
-        </el-table-column>
-        <el-table-column prop="reason" label="理由" show-overflow-tooltip></el-table-column>
-        <el-table-column prop="error" label="错误" width="120" show-overflow-tooltip></el-table-column>
-      </el-table>
-      <span slot="footer" class="dialog-footer">
-        <el-button @click="llmDetailsDialogVisible = false">关 闭</el-button>
-      </span>
-    </el-dialog>
   </div>
 </template>
 
 <script>
+import axios from 'axios';
+
 export default {
   name: 'DetectionDetail',
   data() {
@@ -178,8 +176,7 @@ export default {
       detectionId: null,
       pollingInterval: null,
       pollingDelay: 5000,
-      activeAnalysisSections: ['details'],
-      llmDetailsDialogVisible: false
+      activeAnalysisSections: ['details']
     }
   },
   computed: {
@@ -194,19 +191,25 @@ export default {
       // 读取融合结果
       const verdict = this.analysisDetails.fusion?.final_verdict;
       if (!verdict) return 'info';
-      return verdict === 'real' ? 'success' : (verdict === 'fake' ? 'danger' : 'info');
+      if (verdict === 'real') return 'success';
+      if (verdict === 'fake') return 'danger';
+      return 'info'; // 对于unknown和其他未预期的值，都返回info
     },
     getResultText() {
       // 读取融合结果
       const verdict = this.analysisDetails.fusion?.final_verdict;
       if (!verdict) return '未知';
-      return verdict === 'real' ? '真实新闻' : (verdict === 'fake' ? '虚假新闻' : '未知');
+      if (verdict === 'real') return '真实新闻';
+      if (verdict === 'fake') return '虚假新闻';
+      return '未能确定'; // 更明确的未知状态文本
     },
     getConfidenceValue() {
       // 读取融合结果
       const confidence = this.analysisDetails.fusion?.final_confidence;
-      if (confidence === null || confidence === undefined) return 0;
-      return Math.round(confidence * 100);
+      const verdict = this.analysisDetails.fusion?.final_verdict;
+      if (confidence === null || confidence === undefined || verdict === 'unknown') return 0;
+      // 确保置信度在0-100之间
+      return Math.min(100, Math.max(0, Math.round(confidence * 100)));
     },
     isProcessing() {
       return this.detection && (this.detection.status === 'pending' || this.detection.status === 'processing');
@@ -315,7 +318,7 @@ export default {
     },
     
     goToHistory() {
-      this.$router.push('/detection/history')
+      this.$router.push('/dashboard/detection/history')
     },
     
     refreshResult() {
@@ -359,6 +362,15 @@ export default {
       if (lowerVerdict.includes('true') || lowerVerdict.includes('真实')) return 'success';
       if (lowerVerdict.includes('uncertain') || lowerVerdict.includes('无法') || lowerVerdict.includes('混合')) return 'warning';
       return 'info';
+    },
+    fetchDetailData() {
+      this.loading = true;
+      
+      axios.get(`/detection/detections/${this.$route.params.id}/`)
+        .then(response => {
+          this.detailData = response.data;
+          this.loading = false;
+        })
     }
   }
 }
@@ -375,48 +387,62 @@ export default {
   margin-bottom: 20px;
 }
 
-.detection-card {
+.detection-card, .result-card, .waiting-card, .error-card {
+  margin-bottom: 20px;
+}
+
+.detection-header {
   margin-bottom: 20px;
   
-  .detection-header {
-    margin-bottom: 20px;
-    
-    h2 {
-      margin-top: 0;
-      margin-bottom: 10px;
-      color: $main-font-color;
-    }
-    
-    .detection-meta {
-      color: $secondary-font-color;
-      display: flex;
-      justify-content: space-between;
-      align-items: center;
-      font-size: 14px;
-    }
+  h2 {
+    margin-top: 0;
+    margin-bottom: 10px;
+    font-size: 1.5rem;
   }
   
-  .detection-content {
-    .detection-image {
-      margin-bottom: 20px;
-      
-      .el-image {
-        width: 100%;
-        max-height: 400px;
-        border-radius: 4px;
-      }
-    }
-    
-    .news-content {
-      line-height: 1.6;
-      color: $regular-font-color;
-      white-space: pre-line;
-    }
+  .detection-meta {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    color: #888;
+    font-size: 0.9rem;
   }
 }
 
-.result-card, .waiting-card, .error-card {
-  margin-bottom: 20px;
+.detection-content {
+  .detection-image {
+    margin-bottom: 20px;
+    text-align: center;
+    
+    img {
+      max-width: 100%;
+      max-height: 300px;
+      border-radius: 4px;
+    }
+  }
+  
+  .news-content {
+    line-height: 1.6;
+    color: #333;
+    word-break: break-word;
+  }
+}
+
+.llm-results-section {
+  margin-top: 20px;
+  
+  .el-divider__text {
+    font-weight: bold;
+    color: #409EFF;
+  }
+  
+  .el-table {
+    margin-top: 15px;
+    
+    .el-table__row {
+      font-size: 0.9rem;
+    }
+  }
 }
 
 .result-info {
@@ -425,109 +451,97 @@ export default {
     
     .result-label {
       font-weight: bold;
-      margin-bottom: 8px;
-      color: $main-font-color;
+      margin-bottom: 5px;
+      color: #555;
     }
     
     .result-value {
-      &.explanation {
-        white-space: pre-line;
-        line-height: 1.6;
-        color: $regular-font-color;
-      }
+      font-size: 1.1rem;
     }
+  }
+}
+
+.analysis-section {
+  margin-bottom: 15px;
+  padding-bottom: 15px;
+  border-bottom: 1px dashed #eee;
+  
+  &:last-child {
+    border-bottom: none;
+    margin-bottom: 0;
+    padding-bottom: 0;
+  }
+  
+  h4 {
+    margin-top: 0;
+    margin-bottom: 10px;
+    color: #333;
+    
+    i {
+      margin-right: 5px;
+      color: #409EFF;
+    }
+  }
+  
+  p {
+    margin: 5px 0;
+    line-height: 1.5;
   }
 }
 
 .waiting-content, .error-content {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  justify-content: center;
+  text-align: center;
   padding: 20px 0;
   
   i {
-    font-size: 48px;
-    margin-bottom: 20px;
-    color: $warning-color;
+    font-size: 36px;
+    margin-bottom: 15px;
+    display: block;
   }
   
   p {
     margin-bottom: 20px;
-    color: $regular-font-color;
+  }
+}
+
+.waiting-content {
+  i {
+    color: #E6A23C;
+  }
+}
+
+.error-content {
+  i {
+    color: #F56C6C;
   }
   
   .error-message {
-    margin-bottom: 20px;
-    color: $danger-color;
-    font-size: 14px;
+    background: #FEF0F0;
+    padding: 10px;
+    border-radius: 4px;
+    margin-bottom: 15px;
+    color: #F56C6C;
+    text-align: left;
   }
 }
 
-.error-content i {
-  color: $danger-color;
-}
-
 .empty-state {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  padding: 100px 0;
+  text-align: center;
+  padding: 50px 0;
   
   i {
-    font-size: 60px;
+    font-size: 48px;
+    color: #909399;
     margin-bottom: 20px;
-    color: $info-color;
   }
   
   p {
     margin-bottom: 20px;
-    color: $regular-font-color;
+    color: #909399;
   }
 }
 
 .result-tag {
   float: right;
-  margin-top: 3px;
-}
-
-.analysis-section {
-  margin-bottom: 20px;
-  padding-bottom: 15px;
-  border-bottom: 1px solid #eee;
-
-  h4 {
-    margin-bottom: 10px;
-    font-size: 15px;
-    color: #303133;
-    i {
-      margin-right: 5px;
-    }
-  }
-  p {
-    font-size: 14px;
-    color: #606266;
-    margin-bottom: 5px;
-    line-height: 1.5;
-  }
-}
-.analysis-section:last-child {
-  border-bottom: none;
-  margin-bottom: 0;
-  padding-bottom: 0;
-}
-
-::v-deep .el-collapse-item__header {
-  font-size: 16px;
-  font-weight: bold;
-}
-::v-deep .el-collapse-item__content {
-  padding-top: 15px;
-  padding-bottom: 10px;
-}
-
-::v-deep .result-card .el-card__body {
-  padding-bottom: 5px;
 }
 </style> 

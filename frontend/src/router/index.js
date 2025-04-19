@@ -16,6 +16,15 @@ const DetectionDetail = () => import('@/views/detection/Detail.vue')
 const Profile = () => import('@/views/user/Profile.vue')
 const NotFound = () => import('@/views/NotFound.vue')
 
+// 管理员相关组件
+const AdminLayout = () => import('@/views/admin/AdminLayout.vue')
+const AdminDashboard = () => import('@/views/admin/Dashboard.vue')
+const AdminUsers = () => import('@/views/admin/Users.vue')
+const AdminSettings = () => import('@/views/admin/Settings.vue')
+const DetectionStatistics = () => import('@/views/admin/DetectionStatistics.vue')
+// 系统日志页面 - 懒加载
+const SystemLogs = () => import('@/views/admin/SystemLogs.vue')
+
 const routes = [
   {
     path: '/',
@@ -72,6 +81,57 @@ const routes = [
       }
     ]
   },
+  // 添加管理员路由
+  {
+    path: '/admin',
+    component: AdminLayout,
+    redirect: '/admin/dashboard',
+    meta: { requiresAdmin: true },
+    children: [
+      {
+        path: 'dashboard',
+        name: 'AdminDashboard',
+        component: AdminDashboard,
+        meta: { title: '控制面板' }
+      },
+      {
+        path: 'users',
+        name: 'AdminUsers',
+        component: AdminUsers,
+        meta: { title: '用户列表' }
+      },
+      {
+        path: 'settings',
+        name: 'AdminSettings',
+        component: AdminSettings,
+        meta: { title: '系统设置' }
+      },
+      {
+        path: 'detection/list',
+        name: 'AdminDetectionList',
+        component: DetectionHistory,
+        meta: { title: '检测列表' }
+      },
+      {
+        path: 'detection/detail/:id',
+        name: 'AdminDetectionDetail',
+        component: DetectionDetail,
+        meta: { title: '检测详情', hideInMenu: true }
+      },
+      {
+        path: 'detection-stats',
+        name: 'AdminDetectionStats',
+        component: DetectionStatistics,
+        meta: { title: '检测统计' }
+      },
+      {
+        path: 'logs',
+        name: 'AdminLogs',
+        component: SystemLogs,
+        meta: { title: '系统日志' }
+      }
+    ]
+  },
   {
     path: '/404',
     name: 'NotFound',
@@ -107,10 +167,28 @@ router.beforeEach((to, from, next) => {
   
   // 获取token状态
   const token = store.getters.token
+  const isAdmin = store.getters.isAdmin
   
   // 首页特殊处理：已登录用户访问首页时自动跳转到仪表盘
   if (to.path === '/' && token) {
     next({ path: '/dashboard/index' })
+    return
+  }
+  
+  // 管理员页面检查
+  if (to.matched.some(record => record.meta.requiresAdmin)) {
+    if (!token) {
+      next({ path: '/login', query: { redirect: to.fullPath } })
+      return
+    }
+    
+    if (!isAdmin) {
+      next({ path: '/404' })
+      return
+    }
+    
+    // 管理员有权限访问，正常通过
+    next()
     return
   }
   

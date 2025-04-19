@@ -103,14 +103,20 @@
         <el-table-column
           fixed="right"
           label="操作"
-          width="120"
-        >
+          width="180">
           <template slot-scope="scope">
             <el-button
               @click="viewDetail(scope.row.id)"
               type="text"
               size="small">
               查看详情
+            </el-button>
+            <el-button
+              @click="handleDelete(scope.row)"
+              type="text"
+              size="small"
+              style="color: #F56C6C;">
+              删除
             </el-button>
           </template>
         </el-table-column>
@@ -129,10 +135,24 @@
         </el-pagination>
       </div>
     </el-card>
+
+    <el-dialog
+      title="确认删除"
+      :visible.sync="deleteDialogVisible"
+      width="30%">
+      <span>确定要删除这条检测记录吗？此操作不可恢复。</span>
+      <span slot="footer" class="dialog-footer">
+        <el-button @click="deleteDialogVisible = false">取消</el-button>
+        <el-button type="danger" @click="confirmDelete" :loading="deleteLoading">确定删除</el-button>
+      </span>
+    </el-dialog>
   </div>
 </template>
 
 <script>
+import axios from 'axios'
+import { deleteDetection } from '@/api/detection'
+
 export default {
   name: 'DetectionHistory',
   data() {
@@ -144,6 +164,13 @@ export default {
       dateRange: [],
       currentPage: 1,
       pageSize: 10,
+      totalItems: 0,
+      tableData: [],
+      
+      // 删除相关数据
+      deleteDialogVisible: false,
+      deleteLoading: false,
+      currentDeleteItem: null,
       
       statusOptions: [
         { value: 'completed', label: '完成' },
@@ -153,120 +180,177 @@ export default {
       ],
       resultOptions: [
         { value: 'real', label: '真实' },
-        { value: 'fake', label: '虚假' }
+        { value: 'fake', label: '虚假' },
+        { value: 'unknown', label: '未知' }
       ]
     }
   },
   computed: {
-    detectionHistory() {
-      return this.$store.getters.detectionHistory || []
-    },
     filteredData() {
-      let filteredData = [...this.detectionHistory]
+      let filteredData = [...this.tableData];
       
       // 应用标题搜索
       if (this.searchQuery) {
-        const query = this.searchQuery.toLowerCase()
+        const query = this.searchQuery.toLowerCase();
         filteredData = filteredData.filter(item => 
           item.title.toLowerCase().includes(query)
-        )
+        );
       }
       
       // 应用状态过滤
       if (this.statusFilter) {
         filteredData = filteredData.filter(item => 
           item.status === this.statusFilter
-        )
+        );
       }
       
       // 应用结果过滤
       if (this.resultFilter !== '') {
         filteredData = filteredData.filter(item => 
           item.result === this.resultFilter
-        )
+        );
       }
       
       // 应用日期范围过滤
       if (this.dateRange && this.dateRange.length === 2) {
-        const startDate = new Date(this.dateRange[0])
-        startDate.setHours(0, 0, 0, 0)
-        const endDate = new Date(this.dateRange[1])
-        endDate.setHours(23, 59, 59, 999)
+        const startDate = new Date(this.dateRange[0]);
+        startDate.setHours(0, 0, 0, 0);
+        const endDate = new Date(this.dateRange[1]);
+        endDate.setHours(23, 59, 59, 999);
         
         filteredData = filteredData.filter(item => {
-          const itemDate = new Date(item.created_at)
-          return itemDate >= startDate && itemDate <= endDate
-        })
+          const itemDate = new Date(item.created_at);
+          return itemDate >= startDate && itemDate <= endDate;
+        });
       }
       
-      return filteredData
-    },
-    totalItems() {
-      return this.filteredData.length
+      return filteredData;
     },
     filteredDetections() {
       // 分页
-      const start = (this.currentPage - 1) * this.pageSize
-      const end = start + this.pageSize
-      return this.filteredData.slice(start, end)
+      const start = (this.currentPage - 1) * this.pageSize;
+      const end = start + this.pageSize;
+      return this.filteredData.slice(start, end);
     }
   },
   mounted() {
-    this.fetchData()
+    this.fetchData();
   },
   methods: {
     fetchData() {
-      this.loading = true
-      this.$store.dispatch('detection/getDetectionHistory')
+      this.loading = true;
+      
+      // 检查是否在管理员路径下
+      const isAdmin = this.$route.path.includes('/admin/');
+      // 使用不同的API端点，管理员查看所有记录，普通用户查看自己的记录
+      const endpoint = isAdmin ? '/detection/detections/' : '/detection/detections/my_detections/';
+      const params = { page: this.currentPage, limit: this.pageSize };
+      
+      axios.get(endpoint, { params })
+        .then(response => {
+          this.tableData = response.data.results;
+          this.totalItems = response.data.count;
+          this.loading = false;
+        })
         .catch(error => {
-          console.error('获取检测历史失败:', error)
-          this.$message.error('获取检测历史失败，请稍后重试')
-        })
-        .finally(() => {
-          this.loading = false
-        })
+          console.error('获取检测历史失败:', error);
+          this.$message.error(
+            error.response && error.response.status === 404 
+              ? 'API路径错误，请检查后端配置' 
+              : '获取检测历史失败，请稍后重试'
+          );
+          this.loading = false;
+        });
     },
     
     formatDate(dateString) {
-      if (!dateString) return '-'
-      const date = new Date(dateString)
-      return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')} ${String(date.getHours()).padStart(2, '0')}:${String(date.getMinutes()).padStart(2, '0')}`
+      if (!dateString) return '-';
+      const date = new Date(dateString);
+      return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')} ${String(date.getHours()).padStart(2, '0')}:${String(date.getMinutes()).padStart(2, '0')}`;
     },
     
     getStatusType(status) {
       switch (status) {
-        case 'completed': return 'success'
-        case 'pending': return 'info'
-        case 'processing': return 'warning'
-        case 'failed': return 'danger'
-        default: return 'info'
+        case 'completed': return 'success';
+        case 'pending': return 'info';
+        case 'processing': return 'warning';
+        case 'failed': return 'danger';
+        default: return 'info';
       }
     },
     
     getStatusText(status) {
       switch (status) {
-        case 'completed': return '完成'
-        case 'pending': return '等待中'
-        case 'processing': return '处理中'
-        case 'failed': return '失败'
-        default: return '未知'
+        case 'completed': return '完成';
+        case 'pending': return '等待中';
+        case 'processing': return '处理中';
+        case 'failed': return '失败';
+        default: return '未知';
       }
     },
     
     handleFilter() {
-      this.currentPage = 1
+      this.currentPage = 1;
+      // 本地过滤时不需要重新请求
     },
     
     handleSizeChange(val) {
-      this.pageSize = val
+      this.pageSize = val;
+      this.fetchData();
     },
     
     handleCurrentChange(val) {
-      this.currentPage = val
+      this.currentPage = val;
+      this.fetchData();
     },
     
     viewDetail(id) {
-      this.$router.push(`/dashboard/detection/detail/${id}`)
+      // 根据当前路由判断是管理员还是普通用户视图
+      const isAdmin = this.$route.path.includes('/admin/');
+      const baseUrl = isAdmin ? '/admin' : '/dashboard';
+      this.$router.push(`${baseUrl}/detection/detail/${id}`);
+    },
+    
+    // 删除操作
+    handleDelete(row) {
+      this.currentDeleteItem = row;
+      this.deleteDialogVisible = true;
+    },
+    
+    confirmDelete() {
+      if (!this.currentDeleteItem) return;
+      
+      this.deleteLoading = true;
+      
+      // 使用API方法删除
+      deleteDetection(this.currentDeleteItem.id)
+        .then(() => {
+          this.$message({
+            type: 'success',
+            message: '删除成功'
+          });
+          this.deleteDialogVisible = false;
+          // 重新加载数据
+          this.fetchData();
+        })
+        .catch(error => {
+          console.error('删除失败:', error);
+          let errorMsg = '删除失败，请稍后重试';
+          
+          if (error.response) {
+            if (error.response.status === 403) {
+              errorMsg = '没有删除权限，请联系管理员';
+            } else if (error.response.status === 404) {
+              errorMsg = '记录不存在，可能已被删除';
+            }
+          }
+          
+          this.$message.error(errorMsg);
+        })
+        .finally(() => {
+          this.deleteLoading = false;
+          this.currentDeleteItem = null;
+        });
     }
   }
 }

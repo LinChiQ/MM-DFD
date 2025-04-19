@@ -39,6 +39,7 @@ INSTALLED_APPS = [
     # 自定义应用
     'users',
     'detection',
+    'settings',  # 添加settings应用
 ]
 
 MIDDLEWARE = [
@@ -123,19 +124,10 @@ DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
 # --- 模型和路径配置 --- (移动 MODEL_STORAGE_PATH 定义到前面)
 MODEL_STORAGE_PATH = os.path.join(BASE_DIR, '..', 'models')
 OPENROUTER_API_KEY = os.getenv('OPENROUTER_API_KEY', None)
-MODEL_FILENAME = 'best_multimodal_model.pth'
-SCALER_FILENAME = 'metadata_scaler.joblib'
+MODEL_FILENAME = 'best_text_image_model.pth'
 DEVICE = 'cuda' if os.getenv('USE_GPU', 'False').lower() == 'true' else 'cpu' # 可通过环境变量USE_GPU=True启用GPU
 MODEL_PATH = os.path.join(MODEL_STORAGE_PATH, MODEL_FILENAME) # 现在 MODEL_STORAGE_PATH 已定义
-SCALER_PATH = os.path.join(MODEL_STORAGE_PATH, SCALER_FILENAME) # 现在 MODEL_STORAGE_PATH 已定义
-# 确认模型训练时使用的元数据列名
-# 注意：这些列可能不在Detection模型中，detector.py需要处理这种情况
-METADATA_COLS = [
-    'total_likes', 'total_comments', 'total_reposts', 'total_views',
-    'user_followers', 'user_following', 'user_posts', 'user_verified',
-    'user_total_favorited'
-]
-NUM_METADATA_FEATURES = len(METADATA_COLS)
+NUM_METADATA_FEATURES = 0 # 设置为 0
 # 确认模型训练时的参数 (与 train_model.py/model_evaluation.py 保持一致)
 TEXT_MODEL_NAME = 'bert-base-chinese'
 IMAGE_MODEL_NAME = 'resnet50'
@@ -143,7 +135,6 @@ IMAGE_MODEL_INPUT_SIZE = 224
 MAX_TEXT_LEN = 128
 IMG_EMBEDDING_DIM = 2048
 TEXT_EMBEDDING_DIM = 768
-METADATA_EMBEDDING_DIM = 64
 FUSION_OUTPUT_DIM = 256
 # --- 结束模型和路径配置 ---
 

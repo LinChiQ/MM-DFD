@@ -48,14 +48,17 @@ OR_IMAGE_MODELS = [
     "google/gemini-2.0-flash-001",
 ]
 
-# --- Model Weighting (Perplexity highest, then web/strong reasoning, then others) ---
+# --- Model Weighting (Adjusted Weights) ---
 MODEL_WEIGHTS = {
-    "perplexity/sonar-reasoning-pro": 0.4, # Higher weight
-    "perplexity/sonar": 0.2,              # Higher weight
-    "google/gemini-2.0-flash-001": 0.15, # Good reasoning + vision + potential web
-    "deepseek/deepseek-r1": 0.15,              # Strong reasoning
-    "deepseek/deepseek-chat-v3-0324": 0.1,     # Base chat
-    # Ensure sum is close to 1.0 (0.25+0.25+0.20+0.15+0.15 = 1.0)
+    # Perplexity 权重调整以平衡总和
+    "perplexity/sonar-reasoning-pro": 0.35,
+    "perplexity/sonar": 0.2,
+    # 提高 Gemini 权重
+    "google/gemini-2.0-flash-001": 0.3, 
+    # 降低 DeepSeek 权重
+    "deepseek/deepseek-r1": 0.1,
+    "deepseek/deepseek-chat-v3-0324": 0.05, 
+    # 当前总和: 0.35 + 0.2 + 0.3 + 0.1 + 0.05 = 1.0
     # Note: Weights are primarily for text verification aggregation.
 }
 

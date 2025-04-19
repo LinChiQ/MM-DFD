@@ -15,9 +15,9 @@ class UserSerializer(serializers.ModelSerializer):
         model = User
         fields = ['id', 'username', 'email', 'first_name', 'last_name', 'phone', 
                 'avatar', 'bio', 'total_detections', 'fake_detections', 
-                'real_detections', 'date_joined', 'is_active']
+                'real_detections', 'date_joined', 'is_active', 'is_staff', 'is_superuser']
         read_only_fields = ['id', 'total_detections', 'fake_detections', 
-                        'real_detections', 'date_joined', 'is_active']
+                        'real_detections', 'date_joined', 'is_active', 'is_staff', 'is_superuser']
 
 class UserRegistrationSerializer(serializers.ModelSerializer):
     """
@@ -53,9 +53,9 @@ class UserDetailSerializer(serializers.ModelSerializer):
         model = User
         fields = ['id', 'username', 'email', 'first_name', 'last_name', 'phone', 
                 'avatar', 'bio', 'total_detections', 'fake_detections', 
-                'real_detections', 'date_joined', 'is_active']
+                'real_detections', 'date_joined', 'is_active', 'is_staff', 'is_superuser']
         read_only_fields = ['id', 'username', 'email', 'total_detections', 
-                        'fake_detections', 'real_detections', 'date_joined', 'is_active']
+                        'fake_detections', 'real_detections', 'date_joined', 'is_active', 'is_staff', 'is_superuser']
 
 class PasswordChangeSerializer(serializers.Serializer):
     """

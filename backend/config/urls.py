@@ -1,5 +1,5 @@
 """
-URL配置
+项目URL配置
 """
 from django.contrib import admin
 from django.urls import path, include
@@ -9,11 +9,10 @@ from django.conf.urls.static import static
 urlpatterns = [
     path('admin/', admin.site.urls),
     path('api/users/', include('users.urls')),
-    # path('news/', include('news.urls')), # 暂时注释掉，因为它导致了 ModuleNotFoundError
     path('api/detection/', include('detection.urls')),
+    path('api/', include('settings.urls')),  # 包含settings app的URL
 ]
 
-# 开发环境中的媒体文件服务
+# 开发环境下提供媒体文件服务
 if settings.DEBUG:
     urlpatterns += static(settings.MEDIA_URL, document_root=settings.MEDIA_ROOT)
-    urlpatterns += static(settings.STATIC_URL, document_root=settings.STATIC_ROOT)

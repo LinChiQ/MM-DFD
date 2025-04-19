@@ -60,12 +60,12 @@ def get_image_transforms(model_name=settings.IMAGE_MODEL_NAME, input_size=settin
             transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
         ])
 
-# --- Preprocessing Function for Single Item --- #
-def preprocess_input(text, image_path, tokenizer, image_transform, scaler, device):
+# --- Preprocessing Function for Single Item (Metadata Excluded) --- #
+def preprocess_input(text, image_path, tokenizer, image_transform, device):
     """
-    Preprocesses text, image, and metadata for a single detection item.
-    Handles missing image and metadata.
-    Returns a dictionary suitable for model input.
+    Preprocesses text and image for a single detection item.
+    Handles missing image.
+    Returns a dictionary suitable for the text-image model input.
     """
     # 1. Text Processing
     encoding = tokenizer(text,
@@ -90,32 +90,19 @@ def preprocess_input(text, image_path, tokenizer, image_transform, scaler, devic
         except Exception as e:
             logger.warning(f"Could not process image {image_path}: {e}. Skipping image.")
 
-    # 3. Metadata Processing (Using Placeholders)
-    # Create a placeholder array of zeros for metadata features
-    metadata_features = torch.zeros((1, settings.NUM_METADATA_FEATURES), dtype=torch.float32)
+    # 3. 移除 Metadata Processing
+    # metadata_features = torch.zeros(...) 
+    # metadata_tensor = ...
 
-    # Apply the scaler if it exists
-    # --- 临时修改：跳过对零向量的 scaler 处理，直接使用零 --- 
-    # if scaler:
-    #     try:
-    #         # Scale the zero array (note: this might not be meaningful, but matches training pipeline)
-    #         scaled_metadata = scaler.transform(metadata_features.numpy())
-    #         logger.info(f"Scaled metadata (from zeros): {scaled_metadata}") 
-    #         metadata_tensor = torch.tensor(scaled_metadata, dtype=torch.float32).to(device)
-    #         logger.debug("Applied scaler to placeholder metadata.")
-    #     except Exception as e:
-    #         logger.error(f"Failed to apply scaler to metadata: {e}. Using zeros.")
-    #         metadata_tensor = metadata_features.to(device)
-    # else:
-    #     logger.warning("Metadata scaler not found or skipped. Using zeros for metadata features.")
-    metadata_tensor = metadata_features.to(device) # 直接使用全零 Tensor
-    logger.info("Using zero vector directly for metadata (temporary fix).")
-    # --- 结束临时修改 ---
-
+    # 返回不含 metadata 的字典
     return {
         'input_ids': input_ids,
         'attention_mask': attention_mask,
         'image': image_tensor,
-        'metadata': metadata_tensor,
         'image_available': image_available
-    } 
+    }
+
+# --- 移除 Scaler Loading Function --- #
+# def _load_scaler(scaler_path):
+#     """ Loads the metadata scaler. """
+#     ... (移除整个函数) 

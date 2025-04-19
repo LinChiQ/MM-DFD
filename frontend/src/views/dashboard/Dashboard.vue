@@ -25,7 +25,7 @@
             </div>
             <div class="card-info">
               <div class="card-title">真实新闻</div>
-              <div class="card-value">{{ stats.real_count }} ({{ stats.real_percentage }}%)</div>
+              <div class="card-value">{{ stats.real_count }} ({{ stats.real_percentage.toFixed(2) }}%)</div>
             </div>
           </div>
         </el-card>
@@ -39,7 +39,7 @@
             </div>
             <div class="card-info">
               <div class="card-title">虚假新闻</div>
-              <div class="card-value">{{ stats.fake_count }} ({{ stats.fake_percentage }}%)</div>
+              <div class="card-value">{{ stats.fake_count }} ({{ stats.fake_percentage.toFixed(2) }}%)</div>
             </div>
           </div>
         </el-card>
@@ -93,11 +93,12 @@
             style="width: 100%"
             v-loading="loading"
             border
+            fit
           >
             <el-table-column
               prop="title"
               label="标题"
-              width="300"
+              min-width="300"
             ></el-table-column>
             <el-table-column
               prop="created_at"
@@ -120,12 +121,14 @@
             <el-table-column
               prop="result"
               label="结果"
-              width="100"
+              width="90"
             >
               <template slot-scope="scope">
-                <el-tag v-if="scope.row.result != null" :type="scope.row.result ? 'success' : 'danger'">
-                  {{ scope.row.result ? '真实' : '虚假' }}
+                <el-tag v-if="scope.row.status === 'completed' && scope.row.result"
+                        :type="getResultTagType(scope.row.result)">
+                  {{ getResultText(scope.row.result) }}
                 </el-tag>
+                <span v-else-if="scope.row.status === 'completed'">未知</span>
                 <span v-else>-</span>
               </template>
             </el-table-column>
@@ -135,7 +138,7 @@
               width="100"
             >
               <template slot-scope="scope">
-                <div v-if="scope.row.confidence != null">{{ (scope.row.confidence * 100).toFixed(2) }}%</div>
+                <div v-if="scope.row.status === 'completed' && scope.row.confidence_score != null && scope.row.result !== 'unknown'">{{ (scope.row.confidence_score * 100).toFixed(2) }}%</div>
                 <span v-else>-</span>
               </template>
             </el-table-column>
@@ -162,19 +165,22 @@
 
 <script>
 import { mapGetters } from 'vuex'
+import * as echarts from 'echarts'
 
 export default {
   name: 'DashboardView',
   data() {
     return {
       loading: false,
-      recentDetections: []
+      recentDetections: [],
+      pieChart: null,
+      lineChart: null
     }
   },
   computed: {
     ...mapGetters(['detectionStats']),
     stats() {
-      return this.detectionStats || {
+      const statsData = this.detectionStats || {
         total_count: 0,
         fake_count: 0,
         real_count: 0,
@@ -184,41 +190,234 @@ export default {
         fake_percentage: 0,
         real_percentage: 0,
         average_confidence: 0
+      };
+      statsData.fake_percentage = Number(statsData.fake_percentage) || 0;
+      statsData.real_percentage = Number(statsData.real_percentage) || 0;
+      return statsData;
+    }
+  },
+  watch: {
+    stats(newStats) {
+      if (newStats) {
+        this.initPieChart();
+      }
+    },
+    recentDetections(newDetections) {
+      if (newDetections && newDetections.length > 0) {
+         this.initLineChart();
       }
     }
   },
   mounted() {
     this.fetchData()
+    window.addEventListener('resize', this.handleResize);
+  },
+  beforeDestroy() {
+    window.removeEventListener('resize', this.handleResize);
+    if (this.pieChart) {
+      this.pieChart.dispose();
+      this.pieChart = null;
+    }
+    if (this.lineChart) {
+      this.lineChart.dispose();
+      this.lineChart = null;
+    }
   },
   methods: {
     fetchData() {
       this.loading = true
-      
-      // 获取统计数据
+      let statsLoaded = false;
+      let historyLoaded = false;
+
+      const checkAndInitCharts = () => {
+        if (statsLoaded && historyLoaded) {
+          this.$nextTick(() => {
+             this.initPieChart();
+             this.initLineChart();
+          });
+          this.loading = false;
+        }
+      };
+
       this.$store.dispatch('detection/getDetectionStats')
+        .then(() => { statsLoaded = true; checkAndInitCharts(); })
         .catch(error => {
           console.error('获取统计数据失败:', error)
           this.$message.error('获取统计数据失败，请稍后重试')
-        })
+          statsLoaded = true;
+          checkAndInitCharts();
+        });
       
-      // 获取最近的检测记录
       this.$store.dispatch('detection/getDetectionHistory')
         .then(detections => {
-          this.recentDetections = detections.slice(0, 5) // 只显示前5条
+          this.recentDetections = detections.slice(0, 7);
+          historyLoaded = true;
+          checkAndInitCharts();
         })
         .catch(error => {
           console.error('获取检测历史失败:', error)
           this.$message.error('获取检测历史失败，请稍后重试')
-        })
-        .finally(() => {
-          this.loading = false
-        })
+          historyLoaded = true;
+          checkAndInitCharts();
+        });
     },
     
-    formatDate(dateString) {
+    initPieChart() {
+      if (!this.$refs.pieChart) return;
+      if (this.pieChart) {
+        this.pieChart.dispose();
+      }
+      this.pieChart = echarts.init(this.$refs.pieChart);
+      
+      // 准备饼图数据
+      const pieData = [];
+      
+      // 添加真实新闻数据
+      if (this.stats.real_count > 0) {
+        pieData.push({ 
+          value: this.stats.real_count, 
+          name: '真实新闻', 
+          itemStyle: { color: '#67C23A' } 
+        });
+      }
+      
+      // 添加虚假新闻数据
+      if (this.stats.fake_count > 0) {
+        pieData.push({ 
+          value: this.stats.fake_count, 
+          name: '虚假新闻', 
+          itemStyle: { color: '#F56C6C' } 
+        });
+      }
+      
+      // 添加其他类型的数据
+      const otherCount = this.stats.completed_count - this.stats.real_count - this.stats.fake_count;
+      if (otherCount > 0) {
+        pieData.push({ 
+          value: otherCount, 
+          name: '其他类型', 
+          itemStyle: { color: '#909399' } 
+        });
+      }
+      
+      const option = {
+        tooltip: {
+          trigger: 'item',
+          formatter: '{a} <br/>{b}: {c} ({d}%)'
+        },
+        legend: {
+          orient: 'vertical',
+          left: 10,
+          data: pieData.map(item => item.name)
+        },
+        series: [
+          {
+            name: '检测结果',
+            type: 'pie',
+            radius: ['50%', '70%'],
+            avoidLabelOverlap: false,
+            label: {
+              show: false,
+              position: 'center'
+            },
+            emphasis: {
+              label: {
+                show: true,
+                fontSize: '20',
+                fontWeight: 'bold'
+              }
+            },
+            labelLine: {
+              show: false
+            },
+            data: pieData
+          }
+        ]
+      };
+      this.pieChart.setOption(option);
+    },
+    
+    initLineChart() {
+      if (!this.$refs.lineChart || !this.recentDetections || this.recentDetections.length === 0) return;
+      if (this.lineChart) {
+        this.lineChart.dispose();
+      }
+      this.lineChart = echarts.init(this.$refs.lineChart);
+      
+      const countsByDate = this.recentDetections.reduce((acc, detection) => {
+        const date = this.formatDate(detection.created_at, true);
+        acc[date] = (acc[date] || 0) + 1;
+        return acc;
+      }, {});
+      
+      const dates = Object.keys(countsByDate).sort();
+      const counts = dates.map(date => countsByDate[date]);
+      
+      const option = {
+        tooltip: {
+          trigger: 'axis'
+        },
+        xAxis: {
+          type: 'category',
+          boundaryGap: false,
+          data: dates
+        },
+        yAxis: {
+          type: 'value',
+           minInterval: 1
+        },
+        grid: {
+            left: '3%',
+            right: '4%',
+            bottom: '3%',
+            containLabel: true
+        },
+        series: [
+          {
+            name: '检测数量',
+            type: 'line',
+            smooth: true,
+            data: counts,
+            itemStyle: { color: '#409EFF' },
+            areaStyle: {
+                color: new echarts.graphic.LinearGradient(0, 0, 0, 1, [
+                    {
+                        offset: 0,
+                        color: 'rgba(64, 158, 255, 0.3)'
+                    },
+                    {
+                        offset: 1,
+                        color: 'rgba(64, 158, 255, 0)'
+                    }
+                ])
+            }
+          }
+        ]
+      };
+      this.lineChart.setOption(option);
+    },
+    
+    handleResize() {
+      if (this.pieChart) {
+        this.pieChart.resize();
+      }
+      if (this.lineChart) {
+        this.lineChart.resize();
+      }
+    },
+
+    formatDate(dateString, dateOnly = false) {
       if (!dateString) return '-'
       const date = new Date(dateString)
-      return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')} ${String(date.getHours()).padStart(2, '0')}:${String(date.getMinutes()).padStart(2, '0')}`
+      const year = date.getFullYear();
+      const month = String(date.getMonth() + 1).padStart(2, '0');
+      const day = String(date.getDate()).padStart(2, '0');
+      if (dateOnly) {
+          return `${year}-${month}-${day}`;
+      }
+      const hours = String(date.getHours()).padStart(2, '0');
+      const minutes = String(date.getMinutes()).padStart(2, '0');
+      return `${year}-${month}-${day} ${hours}:${minutes}`
     },
     
     getStatusType(status) {
@@ -242,12 +441,28 @@ export default {
     },
     
     viewDetail(id) {
-      this.$router.push(`/detection/detail/${id}`)
+      this.$router.push(`/dashboard/detection/detail/${id}`)
     },
     
     viewMore() {
-      this.$router.push('/detection/history')
-    }
+      this.$router.push('/dashboard/detection/history')
+    },
+
+    getResultTagType(result) {
+      if (result === 'fake') return 'danger';
+      if (result === 'real') return 'success';
+      if (result === 'uncertain') return 'warning';
+      if (result === 'mixed') return 'warning';
+      return 'info';
+    },
+
+    getResultText(result) {
+      if (result === 'fake') return '虚假';
+      if (result === 'real') return '真实';
+      if (result === 'uncertain') return '不确定';
+      if (result === 'mixed') return '混合';
+      return result || '未知';
+    },
   }
 }
 </script>
@@ -257,6 +472,8 @@ export default {
 
 .dashboard-container {
   padding: 20px;
+  height: calc(100vh - 84px);
+  overflow-y: auto;
 }
 
 .dashboard-card {
@@ -323,7 +540,13 @@ export default {
   height: 400px;
   
   .chart-container {
-    height: 100%;
+    height: 320px;
+    width: 100%;
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    color: #909399;
+    font-size: 16px;
   }
 }
 </style> 

@@ -25,6 +25,10 @@ class IsOwnerOrReadOnly(permissions.BasePermission):
         if request.method in permissions.SAFE_METHODS:
             return True
         
+        # 管理员具有所有权限
+        if request.user.is_staff:
+            return True
+            
         # 写入权限只允许对象的所有者
         return obj.user == request.user
 
