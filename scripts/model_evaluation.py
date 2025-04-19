@@ -1,299 +1,332 @@
-#!/usr/bin/env python
-# -*- coding: utf-8 -*-
-"""
-多模态虚假新闻检测模型评估脚本
-使用PyTorch 2.6.0语法
-"""
+# scripts/model_evaluation.py
+
 import os
-import sys
-import argparse
-import json
-import numpy as np
 import pandas as pd
-from tqdm import tqdm
-from pathlib import Path
-import matplotlib.pyplot as plt
+import numpy as np
 import torch
 import torch.nn as nn
-import torch.nn.functional as F
-from torch.utils.data import Dataset, DataLoader
-from sklearn.metrics import accuracy_score, precision_score, recall_score, f1_score, roc_auc_score
-from sklearn.metrics import confusion_matrix, classification_report
-from torchvision import transforms
-from PIL import Image
+from torch.utils.data import DataLoader
+from sklearn.model_selection import train_test_split
+from sklearn.preprocessing import StandardScaler
+from sklearn.metrics import (
+    accuracy_score,
+    precision_score,
+    recall_score,
+    f1_score,
+    roc_auc_score,
+    confusion_matrix,
+    classification_report
+)
+from pathlib import Path
+import logging
+import time
+import joblib
+from tqdm import tqdm
+import argparse
+import matplotlib.pyplot as plt
+import seaborn as sns
 
-# 使用PyTorch 2.6.0的新特性
-import torch.compiler
-from torch.distributed._tensor import DeviceMesh
+# Import necessary classes and functions
+try:
+    # Import only the necessary classes from train_model
+    from train_model import MultimodalFakeNewsModel, MetadataEncoder
+    # Import necessary functions from data_loader
+    from data_loader import (
+        MultimodalFakeNewsDataset,
+        get_tokenizer,
+        get_image_transforms
+    )
+except ImportError as e:
+    logging.error(f"Could not import necessary components. Make sure train_model.py and data_loader.py are in the path. Error: {e}")
+    exit(1)
 
-# 多模态数据集类
-class MultiModalNewsDataset(Dataset):
-    def __init__(self, data_dir, split='train', transform=None, text_max_len=512):
-        """
-        多模态数据集初始化
-        
-        Args:
-            data_dir: 数据目录
-            split: 数据集划分 (train, val, test)
-            transform: 图像变换
-            text_max_len: 文本最大长度
-        """
-        self.data_dir = Path(data_dir)
-        self.split = split
-        self.transform = transform
-        self.text_max_len = text_max_len
-        
-        # 加载数据
-        self.data_path = self.data_dir / f"{split}.json"
-        if not self.data_path.exists():
-            raise FileNotFoundError(f"未找到数据文件: {self.data_path}")
-            
-        with open(self.data_path, 'r', encoding='utf-8') as f:
-            self.data = json.load(f)
-            
-        # 图像目录
-        self.image_dir = self.data_dir / "images"
-        
-    def __len__(self):
-        return len(self.data)
-        
-    def __getitem__(self, idx):
-        item = self.data[idx]
-        
-        # 文本数据
-        text = item['title'] + ' ' + item['content']
-        
-        # 图像数据
-        image_path = self.image_dir / item['image_filename']
-        if image_path.exists():
-            try:
-                image = Image.open(image_path).convert('RGB')
-                if self.transform:
-                    image = self.transform(image)
-            except Exception as e:
-                print(f"无法加载图像 {image_path}: {e}")
-                # 使用空白图像替代
-                image = torch.zeros((3, 224, 224))
-        else:
-            # 使用空白图像替代
-            image = torch.zeros((3, 224, 224))
-            
-        # 标签
-        label = torch.tensor(1 if item['label'] == 'fake' else 0, dtype=torch.long)
-        
-        return {
-            'id': item['id'],
-            'text': text,
-            'image': image,
-            'label': label
-        }
 
-# 多模态融合模型 (基于PyTorch 2.6.0)
-class MultiModalFakeNewsModel(nn.Module):
-    def __init__(self, text_model_name='bert-base-uncased', image_model_name='resnet50', num_classes=2):
-        """
-        多模态虚假新闻检测模型
-        
-        Args:
-            text_model_name: 文本模型名称
-            image_model_name: 图像模型名称
-            num_classes: 类别数
-        """
-        super(MultiModalFakeNewsModel, self).__init__()
-        
-        # 文本编码器
-        from transformers import AutoModel, AutoTokenizer
-        self.text_encoder = AutoModel.from_pretrained(text_model_name)
-        self.tokenizer = AutoTokenizer.from_pretrained(text_model_name)
-        
-        # 图像编码器
-        import timm
-        self.image_encoder = timm.create_model(image_model_name, pretrained=True)
-        
-        # 获取图像特征维度 (使用PyTorch 2.6.0语法)
-        with torch.device('meta'):
-            meta_model = torch.nn.Linear(10, 10)
-            # 使用PyTorch 2.6.0的fake tensor特性
-            dummy_input = torch.empty(1, 3, 224, 224, device='meta')
-            with torch.no_grad():
-                if hasattr(self.image_encoder, 'get_classifier'):
-                    # 对于timm模型，使用其API获取特征维度
-                    self.image_dim = self.image_encoder.get_classifier().in_features
-                    # 移除分类器
-                    self.image_encoder.reset_classifier(0)
-                else:
-                    # 对于其他模型，假设特征维度为2048
-                    self.image_dim = 2048
-        
-        # 文本特征维度
-        self.text_dim = self.text_encoder.config.hidden_size
-        
-        # 多模态融合
-        self.fusion_dim = 512
-        self.text_projection = nn.Linear(self.text_dim, self.fusion_dim)
-        self.image_projection = nn.Linear(self.image_dim, self.fusion_dim)
-        
-        # 使用PyTorch 2.6.0中新增的激活函数
-        self.fusion = nn.Sequential(
-            nn.Linear(self.fusion_dim * 2, self.fusion_dim),
-            nn.SiLU(),  # 使用PyTorch新增的SiLU (Swish)激活函数
-            nn.Dropout(0.1),
-            nn.Linear(self.fusion_dim, num_classes)
-        )
-        
-        # 使用PyTorch 2.6.0新增的初始化方法
-        nn.init.trunc_normal_(self.text_projection.weight, std=0.02)
-        nn.init.trunc_normal_(self.image_projection.weight, std=0.02)
-        
-    def forward(self, input_ids, attention_mask, images):
-        """
-        前向传播
-        
-        Args:
-            input_ids: 文本输入ID
-            attention_mask: 注意力掩码
-            images: 图像输入
-            
-        Returns:
-            logits: 预测logits
-        """
-        # 文本特征提取
-        text_outputs = self.text_encoder(input_ids=input_ids, attention_mask=attention_mask)
-        text_features = text_outputs.last_hidden_state[:, 0, :]  # [CLS]标记对应的特征
-        
-        # 图像特征提取
-        image_features = self.image_encoder(images)
-        
-        # 特征投影
-        text_projected = self.text_projection(text_features)
-        image_projected = self.image_projection(image_features)
-        
-        # 使用PyTorch 2.6.0的新方法进行特征融合
-        fused_features = torch.cat([text_projected, image_projected], dim=1)
-        logits = self.fusion(fused_features)
-        
-        return logits
-    
-    def compile_model(self):
-        """使用PyTorch 2.6.0的编译功能优化模型"""
-        return torch.compiler.compile(self)
+# Configure logging
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 
-# 评估函数
-def evaluate_model(model, data_loader, device):
-    """
-    评估模型性能
-    
-    Args:
-        model: 模型
-        data_loader: 数据加载器
-        device: 设备
-        
-    Returns:
-        metrics: 评估指标
-    """
+# --- Configuration (Mirrored from train_model.py for consistency) ---
+BASE_DIR = Path(__file__).parent.parent
+DATA_DIR = BASE_DIR / 'data'
+PROCESSED_DIR = DATA_DIR / 'processed'
+CSV_PATH = PROCESSED_DIR / 'processed_data.csv'
+OUTPUT_DIR = BASE_DIR / 'models'
+DEFAULT_MODEL_PATH = OUTPUT_DIR / 'best_multimodal_model.pth'
+DEFAULT_SCALER_PATH = OUTPUT_DIR / 'metadata_scaler.joblib'
+RESULTS_DIR = BASE_DIR / 'evaluation_results' # Directory to save evaluation outputs
+RESULTS_DIR.mkdir(exist_ok=True)
+
+# Model Parameters (Ensure these match the trained model's config)
+TEXT_MODEL_NAME = 'bert-base-chinese'
+IMAGE_MODEL_NAME = 'resnet50'
+IMAGE_MODEL_INPUT_SIZE = 224
+MAX_TEXT_LEN = 128
+NUM_METADATA_FEATURES = 9
+IMG_EMBEDDING_DIM = 2048
+TEXT_EMBEDDING_DIM = 768
+METADATA_EMBEDDING_DIM = 64
+FUSION_OUTPUT_DIM = 256
+
+# Metadata Columns (Ensure this matches the scaler and data)
+METADATA_COLS = [
+    'total_likes', 'total_comments', 'total_reposts', 'total_views',
+    'user_followers', 'user_following', 'user_posts', 'user_verified',
+    'user_total_favorited'
+]
+
+# Data Split Parameters (Must match training split)
+TEST_SPLIT = 0.15
+RANDOM_SEED = 42
+
+# Evaluation specific batch size (can be larger than training if memory allows)
+# Inherit training BATCH_SIZE as a default or set a new one
+EVAL_BATCH_SIZE = 32 * 2 # Example: double the training batch size
+
+# --- Evaluation Function ---
+
+def evaluate(model, data_loader, device):
+    """ Runs model inference on the data_loader and calculates metrics. """
     model.eval()
-    
-    all_preds = []
+    all_preds_proba = []
     all_labels = []
-    
+    all_ids = []
+
+    logging.info("Starting evaluation...")
     with torch.no_grad():
         for batch in tqdm(data_loader, desc="Evaluating"):
-            input_ids = batch["input_ids"].to(device)
-            attention_mask = batch["attention_mask"].to(device)
-            images = batch["images"].to(device)
-            labels = batch["labels"].to(device)
-            
-            outputs = model(input_ids, attention_mask, images)
-            _, preds = torch.max(outputs, 1)
-            
-            all_preds.extend(preds.cpu().numpy())
-            all_labels.extend(labels.cpu().numpy())
-    
-    # 计算评估指标
-    accuracy = accuracy_score(all_labels, all_preds)
-    precision = precision_score(all_labels, all_preds, average='weighted')
-    recall = recall_score(all_labels, all_preds, average='weighted')
-    f1 = f1_score(all_labels, all_preds, average='weighted')
-    
-    # 打印分类报告
-    report = classification_report(all_labels, all_preds)
-    
-    # 混淆矩阵
-    cm = confusion_matrix(all_labels, all_preds)
-    
-    metrics = {
-        "accuracy": accuracy,
-        "precision": precision,
-        "recall": recall,
-        "f1": f1,
-        "classification_report": report,
-        "confusion_matrix": cm.tolist()
-    }
-    
-    return metrics
+            # Move batch to device
+            input_ids = batch['input_ids'].to(device)
+            attention_mask = batch['attention_mask'].to(device)
+            images = batch['image'].to(device)
+            metadata = batch['metadata'].to(device)
+            labels = batch['label'].to(device)
+            image_available = batch['image_available'].to(device)
+            item_ids = batch['id'] # Keep track of IDs if needed
 
+            # Forward pass
+            outputs = model(input_ids, attention_mask, images, metadata, image_available)
+            probabilities = torch.sigmoid(outputs).cpu().numpy()
+
+            all_preds_proba.extend(probabilities)
+            all_labels.extend(labels.cpu().numpy())
+            all_ids.extend(item_ids) # Store IDs
+
+    logging.info("Evaluation loop finished. Calculating metrics...")
+
+    # --- Calculate Metrics ---
+    all_labels = np.array(all_labels)
+    all_preds_proba = np.array(all_preds_proba)
+    all_preds_binary = (all_preds_proba >= 0.5).astype(int)
+
+    accuracy = accuracy_score(all_labels, all_preds_binary)
+    precision = precision_score(all_labels, all_preds_binary, zero_division=0)
+    recall = recall_score(all_labels, all_preds_binary, zero_division=0)
+    f1 = f1_score(all_labels, all_preds_binary, zero_division=0)
+    try:
+        auc = roc_auc_score(all_labels, all_preds_proba) # AUC uses probabilities
+    except ValueError:
+        auc = 0.0
+        logging.warning("AUC calculation failed (likely only one class present in labels). Setting AUC to 0.0")
+
+    cm = confusion_matrix(all_labels, all_preds_binary)
+    class_report = classification_report(all_labels, all_preds_binary, zero_division=0, target_names=['Real', 'Fake']) # Assuming 0: Real, 1: Fake
+
+    metrics = {
+        "Accuracy": accuracy,
+        "Precision": precision,
+        "Recall": recall,
+        "F1 Score": f1,
+        "AUC": auc,
+        "Confusion Matrix": cm,
+        "Classification Report": class_report
+    }
+
+    # Optionally return predictions and IDs for further analysis
+    # predictions_df = pd.DataFrame({'id': all_ids, 'label': all_labels, 'prediction_proba': all_preds_proba, 'prediction_binary': all_preds_binary})
+
+    return metrics #, predictions_df
+
+
+def plot_confusion_matrix(cm, class_names, output_path):
+    """ Plots and saves the confusion matrix. """
+    try:
+        plt.figure(figsize=(8, 6))
+        sns.heatmap(cm, annot=True, fmt='d', cmap='Blues', xticklabels=class_names, yticklabels=class_names)
+        plt.title('Confusion Matrix')
+        plt.ylabel('True Label')
+        plt.xlabel('Predicted Label')
+        plt.tight_layout()
+        plt.savefig(output_path)
+        plt.close()
+        logging.info(f"Confusion matrix saved to {output_path}")
+    except Exception as e:
+        logging.error(f"Failed to plot or save confusion matrix: {e}")
+
+# --- Argument Parser ---
 def parse_args():
-    """解析命令行参数"""
-    parser = argparse.ArgumentParser(description='多模态虚假新闻检测模型评估')
-    parser.add_argument('--model-path', required=True, help='模型路径')
-    parser.add_argument('--data-dir', required=True, help='数据目录')
-    parser.add_argument('--batch-size', type=int, default=16, help='批次大小')
-    parser.add_argument('--output-dir', default='./results', help='输出目录')
+    parser = argparse.ArgumentParser(description="Evaluate a trained Multimodal Fake News Model.")
+    parser.add_argument('--model_path', type=str, default=str(DEFAULT_MODEL_PATH),
+                        help=f"Path to the trained model state dictionary (default: {DEFAULT_MODEL_PATH})")
+    parser.add_argument('--scaler_path', type=str, default=str(DEFAULT_SCALER_PATH),
+                        help=f"Path to the saved metadata scaler (default: {DEFAULT_SCALER_PATH})")
+    parser.add_argument('--csv_path', type=str, default=str(CSV_PATH),
+                        help=f"Path to the processed data CSV file (default: {CSV_PATH})")
+    parser.add_argument('--batch_size', type=int, default=EVAL_BATCH_SIZE,
+                        help=f"Batch size for evaluation (default: {EVAL_BATCH_SIZE})")
+    parser.add_argument('--results_dir', type=str, default=str(RESULTS_DIR),
+                        help=f"Directory to save evaluation results (default: {RESULTS_DIR})")
     return parser.parse_args()
 
-def main():
-    """主函数"""
-    args = parse_args()
-    
-    # 创建输出目录
-    output_dir = Path(args.output_dir)
-    output_dir.mkdir(exist_ok=True, parents=True)
-    
-    # 设置设备
-    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    print(f"使用设备: {device}")
-    
-    # 检查PyTorch版本
-    print(f"PyTorch版本: {torch.__version__}")
-    
-    # 加载模型
-    # 这里应该根据实际情况加载模型
-    # model = MultiModalFakeNewsModel()
-    # model.load_state_dict(torch.load(args.model_path))
-    
-    # 为了演示，我们创建一个新模型
-    model = MultiModalFakeNewsModel()
-    model.to(device)
-    
-    # 使用PyTorch 2.6.0的编译优化功能
-    if torch.__version__ >= '2.6.0':
-        try:
-            print("使用PyTorch编译优化模型...")
-            model = model.compile_model()
-        except Exception as e:
-            print(f"模型编译失败: {e}")
-    
-    # 数据转换
-    transform = transforms.Compose([
-        transforms.Resize((224, 224)),
-        transforms.ToTensor(),
-        transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
-    ])
-    
-    # 加载测试数据集
-    # 实际应用中应该使用真实的数据集和数据加载器
-    # test_dataset = MultiModalNewsDataset(args.data_dir, split='test', transform=transform)
-    # test_loader = DataLoader(test_dataset, batch_size=args.batch_size, shuffle=False)
-    
-    # 打印评估结果
-    # metrics = evaluate_model(model, test_loader, device)
-    
-    # 保存评估结果
-    # with open(output_dir / 'evaluation_results.json', 'w') as f:
-    #     json.dump(metrics, f, indent=2)
-    
-    print("模型评估完成，脚本已准备好！")
-    print("请在使用前使用真实的数据集和模型替换相应的代码。")
 
-if __name__ == "__main__":
-    main() 
+# --- Main Evaluation Logic ---
+def main():
+    args = parse_args()
+    eval_start_time = time.time()
+
+    # Ensure results directory exists
+    results_path = Path(args.results_dir)
+    results_path.mkdir(parents=True, exist_ok=True)
+
+    # 1. Setup Device
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    logging.info(f"Using device: {device}")
+
+    # 2. Load Data and Split (Reproduce the test split)
+    logging.info(f"Loading data from {args.csv_path}...")
+    try:
+        df = pd.read_csv(args.csv_path)
+        # Perform the *exact same* split as in training
+        # We only need the test_df here
+        _, test_df = train_test_split(
+            df,
+            test_size=TEST_SPLIT,
+            random_state=RANDOM_SEED,
+            stratify=df['label'] # Ensure stratification is the same
+        )
+        logging.info(f"Test set size: {len(test_df)}")
+    except FileNotFoundError:
+        logging.error(f"FATAL: Processed CSV not found at {args.csv_path}. Cannot perform evaluation.")
+        return
+    except Exception as e:
+         logging.error(f"FATAL: Error loading or splitting data: {e}")
+         return
+
+    # 3. Load Scaler
+    logging.info(f"Loading metadata scaler from {args.scaler_path}...")
+    try:
+        metadata_scaler = joblib.load(args.scaler_path)
+    except FileNotFoundError:
+        logging.error(f"FATAL: Metadata scaler not found at {args.scaler_path}. Evaluation requires the scaler used during training.")
+        # Option: Proceed without scaling metadata (might give poor results)
+        # metadata_scaler = None
+        # logging.warning("Proceeding without metadata scaling.")
+        return # Exit if scaler is essential
+    except Exception as e:
+         logging.error(f"FATAL: Error loading scaler: {e}")
+         return
+
+    # 4. Setup Tokenizer and Transforms
+    logging.info("Setting up tokenizer and image transforms...")
+    tokenizer = get_tokenizer(TEXT_MODEL_NAME)
+    # Use non-augmented transforms for evaluation
+    image_transform = get_image_transforms(input_size=IMAGE_MODEL_INPUT_SIZE, augment=False)
+
+    # 5. Create Test Dataset and DataLoader
+    logging.info("Creating test Dataset and DataLoader...")
+    try:
+        test_dataset = MultimodalFakeNewsDataset(
+            dataframe=test_df,
+            data_dir=DATA_DIR, # Pass the base data dir
+            tokenizer=tokenizer,
+            image_transform=image_transform,
+            max_len=MAX_TEXT_LEN, # Now uses the constant defined in this file
+            metadata_cols=METADATA_COLS, # Now uses the constant defined in this file
+            metadata_scaler=metadata_scaler # Use the loaded scaler (Corrected keyword argument)
+        )
+        test_loader = DataLoader(
+            test_dataset,
+            batch_size=args.batch_size,
+            shuffle=False, # No shuffling for evaluation
+            num_workers=2, # Adjust based on system
+            pin_memory=True
+        )
+        logging.info("Test DataLoader created.")
+    except Exception as e:
+         logging.error(f"FATAL: Error creating test Dataset or DataLoader: {e}", exc_info=True)
+         return
+
+    # 6. Load Model
+    logging.info("Loading model...")
+    # Use the constants defined in this file to initialize the model structure
+    model = MultimodalFakeNewsModel(
+        text_model_name=TEXT_MODEL_NAME,
+        image_model_name=IMAGE_MODEL_NAME,
+        num_metadata_features=NUM_METADATA_FEATURES,
+        text_embedding_dim=TEXT_EMBEDDING_DIM,
+        img_embedding_dim=IMG_EMBEDDING_DIM,
+        metadata_embedding_dim=METADATA_EMBEDDING_DIM,
+        fusion_output_dim=FUSION_OUTPUT_DIM
+    )
+
+    logging.info(f"Loading model state from: {args.model_path}")
+    try:
+        model.load_state_dict(torch.load(args.model_path, map_location=device)) # Load to target device
+        model.to(device)
+        logging.info("Model loaded successfully.")
+    except FileNotFoundError:
+        logging.error(f"FATAL: Model file not found at {args.model_path}. Cannot perform evaluation.")
+        return
+    except Exception as e:
+        logging.error(f"FATAL: Error loading model state: {e}")
+        return
+
+    # 7. Perform Evaluation
+    metrics = evaluate(model, test_loader, device)
+
+    # 8. Display and Save Results
+    logging.info("\n--- Test Set Evaluation Results ---")
+    print(f"Accuracy: {metrics['Accuracy']:.4f}")
+    print(f"Precision: {metrics['Precision']:.4f}")
+    print(f"Recall: {metrics['Recall']:.4f}")
+    print(f"F1 Score: {metrics['F1 Score']:.4f}")
+    print(f"AUC: {metrics['AUC']:.4f}")
+    print("\nClassification Report:")
+    print(metrics['Classification Report'])
+    print("\nConfusion Matrix:")
+    print(metrics['Confusion Matrix'])
+    logging.info("------------------------------------")
+
+    # Save results to files
+    results_file_path = results_path / "evaluation_metrics.txt"
+    cm_plot_path = results_path / "confusion_matrix.png"
+
+    try:
+        with open(results_file_path, "w", encoding="utf-8") as f:
+            f.write("--- Test Set Evaluation Results ---\n")
+            f.write(f"Model Path: {args.model_path}\n")
+            f.write(f"Scaler Path: {args.scaler_path}\n")
+            f.write(f"Data CSV: {args.csv_path}\n")
+            f.write(f"Evaluation Time: {time.strftime('%Y-%m-%d %H:%M:%S')}\n")
+            f.write("------------------------------------\n")
+            f.write(f"Accuracy: {metrics['Accuracy']:.4f}\n")
+            f.write(f"Precision: {metrics['Precision']:.4f}\n")
+            f.write(f"Recall: {metrics['Recall']:.4f}\n")
+            f.write(f"F1 Score: {metrics['F1 Score']:.4f}\n")
+            f.write(f"AUC: {metrics['AUC']:.4f}\n\n")
+            f.write("Classification Report:\n")
+            f.write(metrics['Classification Report'])
+            f.write("\n\nConfusion Matrix:\n")
+            f.write(np.array2string(metrics['Confusion Matrix']))
+        logging.info(f"Evaluation metrics saved to {results_file_path}")
+
+        # Plot and save confusion matrix
+        plot_confusion_matrix(metrics['Confusion Matrix'], class_names=['Real', 'Fake'], output_path=cm_plot_path)
+
+    except Exception as e:
+        logging.error(f"Error saving evaluation results: {e}")
+
+    eval_duration = time.time() - eval_start_time
+    logging.info(f"Total evaluation script duration: {eval_duration / 60:.2f} minutes")
+
+
+if __name__ == '__main__':
+    main()

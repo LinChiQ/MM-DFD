@@ -84,19 +84,19 @@
           width="100"
         >
           <template slot-scope="scope">
-            <el-tag v-if="scope.row.result != null" :type="scope.row.result ? 'success' : 'danger'">
-              {{ scope.row.result ? '真实' : '虚假' }}
+            <el-tag v-if="scope.row.result != null" :type="scope.row.result === 'real' ? 'success' : (scope.row.result === 'fake' ? 'danger' : 'info')">
+              {{ scope.row.result === 'real' ? '真实' : (scope.row.result === 'fake' ? '虚假' : '未知') }}
             </el-tag>
             <span v-else>-</span>
           </template>
         </el-table-column>
         <el-table-column
-          prop="confidence"
+          prop="confidence_score"
           label="置信度"
           width="100"
         >
           <template slot-scope="scope">
-            <div v-if="scope.row.confidence != null">{{ (scope.row.confidence * 100).toFixed(2) }}%</div>
+            <div v-if="scope.row.confidence_score != null">{{ (scope.row.confidence_score * 100).toFixed(2) }}%</div>
             <span v-else>-</span>
           </template>
         </el-table-column>
@@ -152,8 +152,8 @@ export default {
         { value: 'failed', label: '失败' }
       ],
       resultOptions: [
-        { value: true, label: '真实' },
-        { value: false, label: '虚假' }
+        { value: 'real', label: '真实' },
+        { value: 'fake', label: '虚假' }
       ]
     }
   },
@@ -266,7 +266,7 @@ export default {
     },
     
     viewDetail(id) {
-      this.$router.push(`/detection/detail/${id}`)
+      this.$router.push(`/dashboard/detection/detail/${id}`)
     }
   }
 }

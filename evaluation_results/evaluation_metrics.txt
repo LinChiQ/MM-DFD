@@ -1,0 +1,26 @@
+--- Test Set Evaluation Results ---
+Model Path: C:\Users\lateyoung\Desktop\MM-DFD\models\best_multimodal_model.pth
+Scaler Path: C:\Users\lateyoung\Desktop\MM-DFD\models\metadata_scaler.joblib
+Data CSV: C:\Users\lateyoung\Desktop\MM-DFD\data\processed\processed_data.csv
+Evaluation Time: 2025-04-18 18:57:01
+------------------------------------
+Accuracy: 0.9182
+Precision: 0.9142
+Recall: 0.9504
+F1 Score: 0.9319
+AUC: 0.9677
+
+Classification Report:
+              precision    recall  f1-score   support
+
+        Real       0.92      0.87      0.90      1968
+        Fake       0.91      0.95      0.93      2824
+
+    accuracy                           0.92      4792
+   macro avg       0.92      0.91      0.91      4792
+weighted avg       0.92      0.92      0.92      4792
+
+
+Confusion Matrix:
+[[1716  252]
+ [ 140 2684]]

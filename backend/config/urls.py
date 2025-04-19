@@ -9,6 +9,7 @@ from django.conf.urls.static import static
 urlpatterns = [
     path('admin/', admin.site.urls),
     path('api/users/', include('users.urls')),
+    # path('news/', include('news.urls')), # 暂时注释掉，因为它导致了 ModuleNotFoundError
     path('api/detection/', include('detection.urls')),
 ]
 

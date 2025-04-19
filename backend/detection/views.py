@@ -49,22 +49,34 @@ class DetectionViewSet(viewsets.ModelViewSet):
     def get_serializer_class(self):
         """
         根据不同操作返回不同的序列化器
+        注意：对于 create 操作，我们虽然用 DetectionCreateSerializer 验证输入，
+              但在 create 方法的响应中，我们会用 DetectionSerializer 返回完整数据。
         """
         if self.action == 'create':
             return DetectionCreateSerializer
         if self.action == 'get_stats':
             return DetectionStatSerializer
+        # 对于 list, retrieve, update, partial_update, destroy 等，使用默认的 DetectionSerializer
         return DetectionSerializer
-    
+
+    # 覆盖 create 方法以确保返回完整序列化数据
+    def create(self, request, *args, **kwargs):
+        serializer = self.get_serializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        # 调用 perform_create 来保存对象并触发检测
+        self.perform_create(serializer)
+        # 使用 DetectionSerializer 序列化创建的对象以包含所有字段
+        response_serializer = DetectionSerializer(serializer.instance, context=self.get_serializer_context())
+        headers = self.get_success_headers(response_serializer.data)
+        return Response(response_serializer.data, status=status.HTTP_201_CREATED, headers=headers)
+
     def perform_create(self, serializer):
         """
-        创建检测记录时设置用户
+        创建检测记录时设置用户, 并启动检测任务
         """
         detection = serializer.save(user=self.request.user)
         
-        # 启动异步检测任务
-        # 在实际生产环境中，应该使用Celery等异步任务队列
-        # 这里为了简化直接在请求中执行
+        # 启动异步检测任务 (当前是同步的)
         try:
             detector = FakeNewsDetector(detection.id)
             detector.detect()

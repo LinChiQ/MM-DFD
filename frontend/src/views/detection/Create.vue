@@ -142,8 +142,8 @@ export default {
           this.$store.dispatch('detection/createDetection', this.detectionForm)
             .then(response => {
               this.$message.success('检测任务已提交')
-              // 跳转到检测结果页面
-              this.$router.push(`/detection/detail/${response.id}`)
+              // 修正：跳转到包含父路径的完整路由
+              this.$router.push(`/dashboard/detection/detail/${response.id}`)
             })
             .catch(error => {
               console.error('检测提交失败:', error)

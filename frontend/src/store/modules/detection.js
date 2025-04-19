@@ -35,7 +35,7 @@ const actions = {
   // 获取检测历史
   getDetectionHistory({ commit }) {
     return new Promise((resolve, reject) => {
-      axios.get('/detection/my_detections/')
+      axios.get('/detection/detections/my_detections/')
         .then(response => {
           const history = response.data.results || response.data
           commit('SET_DETECTION_HISTORY', history)
@@ -49,13 +49,20 @@ const actions = {
 
   // 获取检测详情
   getDetectionDetail({ commit }, id) {
+    console.log(`Fetching detection detail for ID: ${id}`);
+    if (!id || id === 'undefined') {
+      console.error('Attempted to fetch detail with invalid ID:', id);
+      return Promise.reject(new Error('Invalid ID for detection detail'));
+    }
     return new Promise((resolve, reject) => {
-      axios.get(`/detection/${id}/`)
+      axios.get(`/detection/detections/${id}/`)
         .then(response => {
+          console.log('Backend response from getDetectionDetail:', response.data);
           commit('SET_CURRENT_DETECTION', response.data)
           resolve(response.data)
         })
         .catch(error => {
+          console.error(`getDetectionDetail API call failed for ID ${id}:`, error.response || error);
           reject(error)
         })
     })
@@ -64,26 +71,26 @@ const actions = {
   // 创建新检测
   createDetection({ commit }, detectionData) {
     return new Promise((resolve, reject) => {
-      // 使用FormData处理文件上传
       const formData = new FormData()
       formData.append('title', detectionData.title)
       formData.append('content', detectionData.content)
-      
       if (detectionData.image) {
         formData.append('image', detectionData.image)
       }
       
-      axios.post('/detection/', formData, {
+      axios.post('/detection/detections/', formData, {
         headers: {
           'Content-Type': 'multipart/form-data'
         }
       })
         .then(response => {
+          console.log('Backend response from createDetection:', response.data);
           commit('ADD_DETECTION', response.data)
           commit('SET_CURRENT_DETECTION', response.data)
           resolve(response.data)
         })
         .catch(error => {
+          console.error('createDetection API call failed:', error.response || error);
           reject(error)
         })
     })
@@ -92,7 +99,7 @@ const actions = {
   // 获取检测结果
   getDetectionResult({ commit }, id) {
     return new Promise((resolve, reject) => {
-      axios.get(`/detection/${id}/result/`)
+      axios.get(`/detection/detections/${id}/result/`)
         .then(response => {
           commit('SET_CURRENT_DETECTION', response.data)
           resolve(response.data)
@@ -106,7 +113,7 @@ const actions = {
   // 获取检测统计信息
   getDetectionStats({ commit }, isAdmin = false) {
     return new Promise((resolve, reject) => {
-      const url = isAdmin ? '/detection/get_stats/?all=true' : '/detection/get_stats/'
+      const url = `/detection/detections/get_stats/${isAdmin ? '?all=true' : ''}`
       axios.get(url)
         .then(response => {
           commit('SET_STATS', response.data)

@@ -45,14 +45,14 @@
             
             <div class="result-info">
               <div class="result-item">
-                <div class="result-label">结论</div>
+                <div class="result-label">最终结论</div>
                 <div class="result-value">
                   <el-tag :type="getResultType" size="medium">{{ getResultText }}</el-tag>
                 </div>
               </div>
               
               <div class="result-item">
-                <div class="result-label">置信度</div>
+                <div class="result-label">最终置信度</div>
                 <div class="result-value">
                   <el-progress 
                     :percentage="getConfidenceValue" 
@@ -60,33 +60,48 @@
                   </el-progress>
                 </div>
               </div>
-              
-              <div class="result-item" v-if="detection.text_score !== undefined">
-                <div class="result-label">文本分析</div>
-                <div class="result-value">
-                  <el-progress 
-                    :percentage="detection.text_score * 100" 
-                    :color="detection.text_score >= 0.5 ? '#67C23A' : '#F56C6C'">
-                  </el-progress>
-                </div>
-              </div>
-              
-              <div class="result-item" v-if="detection.image_score !== undefined">
-                <div class="result-label">图像分析</div>
-                <div class="result-value">
-                  <el-progress 
-                    :percentage="detection.image_score * 100" 
-                    :color="detection.image_score >= 0.5 ? '#67C23A' : '#F56C6C'">
-                  </el-progress>
-                </div>
-              </div>
-              
-              <div class="result-item" v-if="detection.explanation">
-                <div class="result-label">解释</div>
-                <div class="result-value explanation">
-                  {{ detection.explanation }}
-                </div>
-              </div>
+
+              <el-collapse v-model="activeAnalysisSections" v-if="detection.analysis_result">
+                <el-collapse-item title="详细分析过程" name="details">
+                  <div class="analysis-section" v-if="analysisDetails.fusion">
+                    <h4><i class="el-icon-connection"></i> 融合策略</h4>
+                    <p>策略: {{ analysisDetails.fusion.strategy || '未知' }}</p>
+                  </div>
+
+                  <div class="analysis-section" v-if="analysisDetails.local_model">
+                    <h4><i class="el-icon-cpu"></i> 本地模型分析</h4>
+                    <p>结果: 
+                      <el-tag 
+                        :type="getVerdictType(analysisDetails.local_model.result)" 
+                        size="small"
+                      >
+                        {{ getVerdictText(analysisDetails.local_model.result) }}
+                      </el-tag>
+                    </p>
+                    <p>置信度: {{ (analysisDetails.local_model.confidence * 100).toFixed(2) }}%</p>
+                    <p v-if="analysisDetails.local_model.error">错误: {{ analysisDetails.local_model.error }}</p>
+                  </div>
+
+                  <div class="analysis-section" v-if="analysisDetails.llm_verification">
+                    <h4><i class="el-icon-chat-dot-round"></i> LLM 交叉验证</h4>
+                    <p>综合判断: 
+                       <el-tag 
+                         :type="getLlmVerdictType(analysisDetails.llm_verification.overall_verdict)" 
+                         size="small"
+                       >
+                         {{ analysisDetails.llm_verification.overall_verdict || '未知' }}
+                       </el-tag>
+                    </p>
+                    <p>综合置信度: {{ (analysisDetails.llm_verification.aggregated_confidence * 100).toFixed(2) }}%</p>
+                    <p v-if="analysisDetails.llm_verification.needs_manual_review" style="color: orange;"><i class="el-icon-warning-outline"></i> 需要人工审核</p>
+                    <p v-if="analysisDetails.llm_verification.error">错误: {{ analysisDetails.llm_verification.error }}</p>
+                    
+                    <div v-if="llmIndividualResults.length > 0" style="margin-top: 10px;">
+                       <el-button type="text" @click="llmDetailsDialogVisible = true">查看各模型详细结果</el-button>
+                    </div>
+                  </div>
+                </el-collapse-item>
+              </el-collapse>
             </div>
           </el-card>
           
@@ -125,6 +140,32 @@
         <el-button type="primary" @click="goToHistory">返回历史记录</el-button>
       </div>
     </div>
+
+    <el-dialog
+      title="LLM 交叉验证详细结果"
+      :visible.sync="llmDetailsDialogVisible"
+      width="70%"
+      top="5vh" 
+    >
+      <el-table :data="llmIndividualResults" size="medium" border stripe style="width: 100%">
+        <el-table-column prop="model" label="模型" width="200" show-overflow-tooltip></el-table-column>
+        <el-table-column prop="verdict" label="判断" width="110" align="center">
+          <template slot-scope="scope">
+            <el-tag :type="getLlmVerdictType(scope.row.verdict)" size="small">{{ scope.row.verdict }}</el-tag>
+          </template>
+        </el-table-column>
+        <el-table-column prop="confidence" label="置信度" width="90" align="center">
+           <template slot-scope="scope">
+             {{ (scope.row.confidence * 100).toFixed(1) }}%
+           </template>
+        </el-table-column>
+        <el-table-column prop="reason" label="理由" show-overflow-tooltip></el-table-column>
+        <el-table-column prop="error" label="错误" width="120" show-overflow-tooltip></el-table-column>
+      </el-table>
+      <span slot="footer" class="dialog-footer">
+        <el-button @click="llmDetailsDialogVisible = false">关 闭</el-button>
+      </span>
+    </el-dialog>
   </div>
 </template>
 
@@ -134,43 +175,115 @@ export default {
   data() {
     return {
       loading: true,
-      detectionId: null
+      detectionId: null,
+      pollingInterval: null,
+      pollingDelay: 5000,
+      activeAnalysisSections: ['details'],
+      llmDetailsDialogVisible: false
     }
   },
   computed: {
     detection() {
-      return this.$store.getters.currentDetection
+      const det = this.$store.getters.currentDetection;
+      if (det && (det.status === 'completed' || det.status === 'failed')) {
+        this.stopPolling();
+      }
+      return det;
     },
     getResultType() {
-      if (!this.detection || this.detection.result === null) return ''
-      return this.detection.result ? 'success' : 'danger'
+      // 读取融合结果
+      const verdict = this.analysisDetails.fusion?.final_verdict;
+      if (!verdict) return 'info';
+      return verdict === 'real' ? 'success' : (verdict === 'fake' ? 'danger' : 'info');
     },
     getResultText() {
-      if (!this.detection || this.detection.result === null) return '未知'
-      return this.detection.result ? '真实新闻' : '虚假新闻'
+      // 读取融合结果
+      const verdict = this.analysisDetails.fusion?.final_verdict;
+      if (!verdict) return '未知';
+      return verdict === 'real' ? '真实新闻' : (verdict === 'fake' ? '虚假新闻' : '未知');
     },
     getConfidenceValue() {
-      if (!this.detection || this.detection.confidence === null) return 0
-      return Math.round(this.detection.confidence * 100)
+      // 读取融合结果
+      const confidence = this.analysisDetails.fusion?.final_confidence;
+      if (confidence === null || confidence === undefined) return 0;
+      return Math.round(confidence * 100);
+    },
+    isProcessing() {
+      return this.detection && (this.detection.status === 'pending' || this.detection.status === 'processing');
+    },
+    analysisDetails() {
+      if (this.detection && this.detection.analysis_result) {
+        if (typeof this.detection.analysis_result === 'string') {
+          try {
+            return JSON.parse(this.detection.analysis_result);
+          } catch (e) {
+            console.error("Failed to parse analysis_result JSON:", e);
+            return {};
+          }
+        } else {
+          return this.detection.analysis_result;
+        }
+      } 
+      return {};
+    },
+    llmIndividualResults() {
+       if (this.analysisDetails && this.analysisDetails.llm_verification && this.analysisDetails.llm_verification.details) {
+         const details = this.analysisDetails.llm_verification.details;
+         const textResults = details.text_verifications || [];
+         const imgResults = details.image_verifications || [];
+         return [...textResults, ...imgResults];
+       }
+       return [];
     }
   },
   created() {
     this.detectionId = this.$route.params.id
-    this.fetchDetail()
+    this.fetchDetailAndPoll();
+  },
+  beforeDestroy() {
+    this.stopPolling();
   },
   methods: {
-    fetchDetail() {
-      this.loading = true
+    fetchDetailAndPoll() {
+      this.loading = true;
       this.$store.dispatch('detection/getDetectionDetail', this.detectionId)
+        .then(() => {
+          this.loading = false;
+          if (this.isProcessing) {
+            this.startPolling();
+          }
+        })
         .catch(error => {
-          console.error('获取检测详情失败:', error)
-          this.$message.error('获取检测详情失败，请稍后重试')
-        })
-        .finally(() => {
-          this.loading = false
-        })
+          this.loading = false;
+          console.error('获取检测详情失败:', error);
+          this.$message.error('获取检测详情失败，请稍后重试');
+        });
     },
-    
+
+    startPolling() {
+      this.stopPolling();
+      logger.info('开始轮询检测结果...');
+      this.pollingInterval = setInterval(() => {
+        if (!this.isProcessing) {
+          this.stopPolling();
+          return;
+        }
+        logger.debug(`轮询检测结果 ID: ${this.detectionId}`);
+        this.$store.dispatch('detection/getDetectionDetail', this.detectionId)
+          .catch(error => {
+            console.error('轮询失败:', error);
+          });
+      }, this.pollingDelay);
+    },
+
+    stopPolling() {
+      if (this.pollingInterval) {
+        logger.info('停止轮询检测结果。');
+        clearInterval(this.pollingInterval);
+        this.pollingInterval = null;
+      }
+    },
+
     formatDate(dateString) {
       if (!dateString) return '-'
       const date = new Date(dateString)
@@ -206,22 +319,12 @@ export default {
     },
     
     refreshResult() {
-      this.$store.dispatch('detection/getDetectionResult', this.detectionId)
-        .then(() => {
-          if (this.detection.status === 'completed') {
-            this.$message.success('检测已完成！')
-          } else {
-            this.$message.info('检测仍在进行中，请稍后再试')
-          }
-        })
-        .catch(error => {
-          console.error('刷新结果失败:', error)
-          this.$message.error('刷新结果失败，请稍后重试')
-        })
+      this.fetchDetailAndPoll();
+      this.$message.info('正在刷新结果...');
     },
     
     retryDetection() {
-      // 重新提交检测
+      this.stopPolling();
       const data = {
         title: this.detection.title,
         content: this.detection.content,
@@ -237,6 +340,25 @@ export default {
           console.error('重新检测失败:', error)
           this.$message.error('重新检测失败: ' + (error.response?.data?.detail || '请稍后重试'))
         })
+    },
+
+    getVerdictType(result) {
+      if (result === 'fake') return 'danger';
+      if (result === 'real') return 'success';
+      return 'info';
+    },
+    getVerdictText(result) {
+      if (result === 'fake') return '虚假';
+      if (result === 'real') return '真实';
+      return '未知';
+    },
+    getLlmVerdictType(verdict) {
+      if (!verdict) return 'info';
+      const lowerVerdict = verdict.toLowerCase();
+      if (lowerVerdict.includes('fake') || lowerVerdict.includes('虚假') || lowerVerdict.includes('伪造')) return 'danger';
+      if (lowerVerdict.includes('true') || lowerVerdict.includes('真实')) return 'success';
+      if (lowerVerdict.includes('uncertain') || lowerVerdict.includes('无法') || lowerVerdict.includes('混合')) return 'warning';
+      return 'info';
     }
   }
 }
@@ -368,5 +490,44 @@ export default {
 .result-tag {
   float: right;
   margin-top: 3px;
+}
+
+.analysis-section {
+  margin-bottom: 20px;
+  padding-bottom: 15px;
+  border-bottom: 1px solid #eee;
+
+  h4 {
+    margin-bottom: 10px;
+    font-size: 15px;
+    color: #303133;
+    i {
+      margin-right: 5px;
+    }
+  }
+  p {
+    font-size: 14px;
+    color: #606266;
+    margin-bottom: 5px;
+    line-height: 1.5;
+  }
+}
+.analysis-section:last-child {
+  border-bottom: none;
+  margin-bottom: 0;
+  padding-bottom: 0;
+}
+
+::v-deep .el-collapse-item__header {
+  font-size: 16px;
+  font-weight: bold;
+}
+::v-deep .el-collapse-item__content {
+  padding-top: 15px;
+  padding-bottom: 10px;
+}
+
+::v-deep .result-card .el-card__body {
+  padding-bottom: 5px;
 }
 </style> 

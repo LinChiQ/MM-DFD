@@ -32,6 +32,7 @@ opencv-python==4.8.1.78
 # API工具
 requests==2.31.0
 pydantic==2.5.3
+openai
 
 # 工具库
 tqdm==4.66.1

@@ -7,10 +7,15 @@ from dotenv import load_dotenv
 from datetime import timedelta
 
 # 加载.env文件中的环境变量
-load_dotenv()
+# load_dotenv() # 使用下面更明确的方式
+BASE_DIR = Path(__file__).resolve().parent.parent
+dotenv_path = BASE_DIR / '.env'
+load_dotenv(dotenv_path=dotenv_path)
+print(f"DEBUG: Attempted loading .env from {dotenv_path}") # 添加更详细的调试信息
+print(f"DEBUG: Loaded OPENROUTER_API_KEY = {os.getenv('OPENROUTER_API_KEY')}")
 
 # 构建路径
-BASE_DIR = Path(__file__).resolve().parent.parent
+# BASE_DIR = Path(__file__).resolve().parent.parent 
 
 # 安全设置
 SECRET_KEY = os.getenv('SECRET_KEY', 'django-insecure-change-this-in-production')
@@ -115,6 +120,33 @@ MEDIA_ROOT = os.path.join(BASE_DIR, 'media')
 # 默认主键字段类型
 DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
 
+# --- 模型和路径配置 --- (移动 MODEL_STORAGE_PATH 定义到前面)
+MODEL_STORAGE_PATH = os.path.join(BASE_DIR, '..', 'models')
+OPENROUTER_API_KEY = os.getenv('OPENROUTER_API_KEY', None)
+MODEL_FILENAME = 'best_multimodal_model.pth'
+SCALER_FILENAME = 'metadata_scaler.joblib'
+DEVICE = 'cuda' if os.getenv('USE_GPU', 'False').lower() == 'true' else 'cpu' # 可通过环境变量USE_GPU=True启用GPU
+MODEL_PATH = os.path.join(MODEL_STORAGE_PATH, MODEL_FILENAME) # 现在 MODEL_STORAGE_PATH 已定义
+SCALER_PATH = os.path.join(MODEL_STORAGE_PATH, SCALER_FILENAME) # 现在 MODEL_STORAGE_PATH 已定义
+# 确认模型训练时使用的元数据列名
+# 注意：这些列可能不在Detection模型中，detector.py需要处理这种情况
+METADATA_COLS = [
+    'total_likes', 'total_comments', 'total_reposts', 'total_views',
+    'user_followers', 'user_following', 'user_posts', 'user_verified',
+    'user_total_favorited'
+]
+NUM_METADATA_FEATURES = len(METADATA_COLS)
+# 确认模型训练时的参数 (与 train_model.py/model_evaluation.py 保持一致)
+TEXT_MODEL_NAME = 'bert-base-chinese'
+IMAGE_MODEL_NAME = 'resnet50'
+IMAGE_MODEL_INPUT_SIZE = 224
+MAX_TEXT_LEN = 128
+IMG_EMBEDDING_DIM = 2048
+TEXT_EMBEDDING_DIM = 768
+METADATA_EMBEDDING_DIM = 64
+FUSION_OUTPUT_DIM = 256
+# --- 结束模型和路径配置 ---
+
 # REST Framework设置
 REST_FRAMEWORK = {
     'DEFAULT_AUTHENTICATION_CLASSES': [
@@ -142,9 +174,6 @@ AUTH_USER_MODEL = 'users.User'
 # 文件上传设置
 FILE_UPLOAD_MAX_MEMORY_SIZE = 10 * 1024 * 1024  # 10MB
 DATA_UPLOAD_MAX_MEMORY_SIZE = 10 * 1024 * 1024  # 10MB
-
-# 模型配置
-MODEL_STORAGE_PATH = os.path.join(BASE_DIR, '..', 'models')
 
 # 日志配置
 LOGGING = {
