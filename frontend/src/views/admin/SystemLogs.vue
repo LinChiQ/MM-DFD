@@ -27,7 +27,7 @@
           <el-table-column
             prop="timestamp"
             label="时间"
-            width="180">
+            width="240">
           </el-table-column>
           <el-table-column
             prop="level"
@@ -40,11 +40,6 @@
                 {{ scope.row.level }}
               </el-tag>
             </template>
-          </el-table-column>
-          <el-table-column
-            prop="logger"
-            label="来源"
-            width="180">
           </el-table-column>
           <el-table-column
             prop="message"
@@ -76,7 +71,7 @@ export default {
       this.loading = true
       
       // 读取系统日志文件
-      axios.get('/api/settings/logs/')
+      axios.get('/settings/logs/')
         .then(response => {
           this.logs = this.parseLogData(response.data)
           this.loading = false

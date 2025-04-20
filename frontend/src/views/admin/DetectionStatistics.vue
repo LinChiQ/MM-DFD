@@ -122,7 +122,7 @@
               </div>
             </template>
           </el-table-column>
-          <el-table-column prop="user.username" label="用户" width="120"></el-table-column>
+          <el-table-column prop="user" label="用户" width="120"></el-table-column>
           <el-table-column prop="status" label="状态" width="100">
             <template slot-scope="scope">
               <el-tag :type="getStatusType(scope.row.status)">
@@ -132,23 +132,27 @@
           </el-table-column>
           <el-table-column prop="result" label="检测结果" width="100">
             <template slot-scope="scope">
-              <el-tag v-if="scope.row.status === 'completed'" :type="scope.row.result ? 'success' : 'danger'">
-                {{ scope.row.result ? '真实' : '虚假' }}
+              <el-tag v-if="scope.row.status === 'completed'" :type="scope.row.result === 'real' ? 'success' : 'danger'">
+                {{ scope.row.result === 'real' ? '真实' : '虚假' }}
               </el-tag>
               <span v-else>-</span>
             </template>
           </el-table-column>
-          <el-table-column prop="confidence_score" label="置信度" width="120">
+          <el-table-column prop="confidence_score" label="置信度" width="180">
             <template slot-scope="scope">
               <el-progress 
                 v-if="scope.row.status === 'completed'"
-                :percentage="(scope.row.confidence_score * 100)" 
+                :percentage="parseFloat((scope.row.confidence_score * 100).toFixed(2))" 
                 :color="getConfidenceColor(scope.row.confidence_score)">
               </el-progress>
               <span v-else>-</span>
             </template>
           </el-table-column>
-          <el-table-column prop="created_at" label="检测时间" width="180"></el-table-column>
+          <el-table-column prop="created_at" label="检测时间" width="180">
+            <template slot-scope="scope">
+              {{ formatDateTime(scope.row.created_at) }}
+            </template>
+          </el-table-column>
         </el-table>
       </div>
     </el-card>
@@ -258,7 +262,7 @@ export default {
         params.end_date = this.formatDate(this.dateRange[1])
       }
       
-      axios.get('/api/detection/get_stats/', { params })
+      axios.get('/detection/detections/get_stats/', { params })
         .then(response => {
           this.statistics = response.data
           this.updateCharts()
@@ -275,7 +279,7 @@ export default {
     loadRecentDetections() {
       this.loadingDetections = true
       
-      axios.get('/api/detection/', {
+      axios.get('/detection/detections/', {
         params: { page: 1, page_size: 10 } // 只获取最近10条
       })
         .then(response => {
@@ -451,12 +455,25 @@ export default {
     truncateText(text, length) {
       if (!text) return ''
       return text.length > length ? text.substring(0, length) + '...' : text
+    },
+    
+    // Added datetime formatting function
+    formatDateTime(dateString) {
+      if (!dateString) return '-';
+      const date = new Date(dateString);
+      const year = date.getFullYear();
+      const month = ('0' + (date.getMonth() + 1)).slice(-2);
+      const day = ('0' + date.getDate()).slice(-2);
+      const hours = ('0' + date.getHours()).slice(-2);
+      const minutes = ('0' + date.getMinutes()).slice(-2);
+      const seconds = ('0' + date.getSeconds()).slice(-2);
+      return `${year}-${month}-${day} ${hours}:${minutes}:${seconds}`;
     }
   }
 }
 </script>
 
-<style scoped>
+<style>
 .detection-statistics {
   padding: 20px;
 }
@@ -478,8 +495,10 @@ export default {
 }
 
 .data-card {
-  height: 120px;
+  height: 170px;
   overflow: hidden;
+  display: flex;
+  flex-direction: column;
 }
 
 .data-card-header {
@@ -565,5 +584,22 @@ export default {
 
 .error-row {
   background-color: #fef0f0;
+}
+
+// Add style to align progress text
+.recent-detection-card .el-progress__text {
+  text-align: right;
+  display: inline-block;
+  width: 40px;
+  margin-left: 5px;
+}
+
+.recent-detection-card .el-progress-bar {
+  width: 100px;
+  display: inline-block;
+}
+
+.recent-detection-card .el-progress-bar__outer {
+  height: 12px !important;
 }
 </style> 

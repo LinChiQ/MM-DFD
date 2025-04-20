@@ -1,6 +1,7 @@
 from django.shortcuts import render
 import os
 import logging
+import glob
 from django.conf import settings as django_settings
 from django.utils.translation import gettext_lazy as _
 from rest_framework import viewsets, permissions, status
@@ -111,6 +112,94 @@ class SettingsViewSet(viewsets.ViewSet):
             
             return Response(data)
         return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+    
+    @action(detail=False, methods=['get'])
+    def logs(self, request):
+        """
+        获取系统日志
+        """
+        try:
+            # 获取日志文件路径
+            log_dir = getattr(django_settings, 'LOG_DIR', os.path.join(django_settings.BASE_DIR, 'logs'))
+            log_files = glob.glob(os.path.join(log_dir, '*.log'))
+            
+            if not log_files:
+                return Response({'logs': []})
+            
+            # 默认读取最新的日志文件
+            latest_log = max(log_files, key=os.path.getmtime)
+            
+            # 读取日志文件内容
+            log_entries = []
+            with open(latest_log, 'r', encoding='utf-8', errors='replace') as f:
+                for line in f.readlines()[-500:]:  # 只读取最后500行
+                    try:
+                        # 尝试解析日志行
+                        # 实际格式示例: INFO 2025-04-19 18:39:39,699 basehttp "GET /static/admin/css/responsive.css HTTP/1.1" 200 18559
+                        line = line.strip()
+                        parts = line.split(' ', 3)  # 最多分割3次，得到级别、时间戳+日志源、消息
+                        
+                        if len(parts) >= 2:
+                            level = parts[0]  # 第一部分是日志级别
+                            
+                            # 处理第二部分（时间戳）和第三部分（日志源）
+                            if len(parts) >= 3:
+                                # 时间戳通常是固定格式：YYYY-MM-DD HH:MM:SS,SSS
+                                timestamp_parts = parts[1].split(' ', 1)
+                                if len(timestamp_parts) == 1 and len(parts) >= 3:
+                                    # 日期和时间可能被分开了
+                                    date_part = parts[1]
+                                    time_part = parts[2].split(' ', 1)[0]
+                                    timestamp = f"{date_part} {time_part}"
+                                    
+                                    # 日志源在时间后面
+                                    log_source_parts = parts[2].split(' ', 1)
+                                    if len(log_source_parts) > 1:
+                                        log_source = log_source_parts[1]
+                                        message = parts[3] if len(parts) >= 4 else ""
+                                    else:
+                                        log_source = log_source_parts[0]
+                                        message = parts[3] if len(parts) >= 4 else ""
+                                else:
+                                    # 时间戳是一个完整的部分
+                                    timestamp = parts[1]
+                                    log_source = parts[2]
+                                    message = parts[3] if len(parts) >= 4 else ""
+                            else:
+                                # 只有级别和内容，没有时间戳和日志源
+                                timestamp = ""
+                                log_source = ""
+                                message = parts[1] if len(parts) >= 2 else ""
+                        else:
+                            # 无法解析，将整行作为消息
+                            level = "INFO"
+                            timestamp = ""
+                            log_source = ""
+                            message = line
+                        
+                        log_entries.append({
+                            'timestamp': timestamp,
+                            'level': level,
+                            'logger': log_source,
+                            'message': message
+                        })
+                    except Exception as e:
+                        # 解析失败时添加原始行
+                        log_entries.append({
+                            'timestamp': '',
+                            'level': 'ERROR',
+                            'logger': 'log_parser',
+                            'message': f'解析失败: {line.strip()}'
+                        })
+            
+            return Response({'logs': log_entries})
+        
+        except Exception as e:
+            logger.exception(f"获取日志失败: {str(e)}")
+            return Response(
+                {'error': f'获取日志失败: {str(e)}'},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
     
     @action(detail=False, methods=['get'])
     def api_config(self, request):

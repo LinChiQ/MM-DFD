@@ -27,10 +27,6 @@
               <i class="el-icon-user-solid"></i>
               <span>用户列表</span>
             </el-menu-item>
-            <el-menu-item index="/admin/users/create">
-              <i class="el-icon-plus"></i>
-              <span>添加用户</span>
-            </el-menu-item>
           </el-submenu>
           
           <el-submenu index="detections">

@@ -54,15 +54,15 @@
     <section class="stats-section">
       <div class="container stats-container">
         <div class="stat-item">
-          <div class="stat-number">98.7%</div>
+          <div class="stat-number">90.3%</div>
           <div class="stat-label">检测准确率</div>
         </div>
         <div class="stat-item">
-          <div class="stat-number">1000+</div>
+          <div class="stat-number">200+</div>
           <div class="stat-label">每日检测次数</div>
         </div>
         <div class="stat-item">
-          <div class="stat-number">5000+</div>
+          <div class="stat-number">100+</div>
           <div class="stat-label">注册用户</div>
         </div>
         <div class="stat-item">
@@ -235,7 +235,7 @@
               <i class="el-icon-message"></i>
             </div>
             <h3 class="contact-title">电子邮件</h3>
-            <p class="contact-detail">contact@mm-dfd.com</p>
+            <p class="contact-detail">lateyoung1@gmail.com</p>
           </div>
           
           <div class="contact-card">
@@ -251,7 +251,7 @@
               <i class="el-icon-location"></i>
             </div>
             <h3 class="contact-title">地址</h3>
-            <p class="contact-detail">北京市海淀区学院路100号</p>
+            <p class="contact-detail">昆明市呈贡区景明南路</p>
           </div>
         </div>
       </div>

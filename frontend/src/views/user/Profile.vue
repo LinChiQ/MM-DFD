@@ -52,8 +52,8 @@
               <el-input v-model="passwordForm.new_password" type="password"></el-input>
             </el-form-item>
             
-            <el-form-item label="确认密码" prop="confirm_password">
-              <el-input v-model="passwordForm.confirm_password" type="password"></el-input>
+            <el-form-item label="确认密码" prop="new_password2">
+              <el-input v-model="passwordForm.new_password2" type="password"></el-input>
             </el-form-item>
             
             <el-form-item>
@@ -89,7 +89,7 @@ export default {
       passwordForm: {
         old_password: '',
         new_password: '',
-        confirm_password: ''
+        new_password2: ''
       },
       rules: {
         username: [
@@ -109,7 +109,7 @@ export default {
           { required: true, message: '请输入新密码', trigger: 'blur' },
           { min: 6, message: '密码长度不能小于6个字符', trigger: 'blur' }
         ],
-        confirm_password: [
+        new_password2: [
           { required: true, message: '请再次输入密码', trigger: 'blur' },
           { validator: validatePass, trigger: 'blur' }
         ]
@@ -173,7 +173,7 @@ export default {
               this.passwordForm = {
                 old_password: '',
                 new_password: '',
-                confirm_password: ''
+                new_password2: ''
               }
               // 登出并跳转到登录页
               this.$store.dispatch('user/logout')

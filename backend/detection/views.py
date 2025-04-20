@@ -13,6 +13,8 @@ from .serializers import (
     DetectionResultSerializer, DetectionStatSerializer
 )
 from .services.detector import FakeNewsDetector
+from django.db.models.functions import TruncDate
+from datetime import timedelta, datetime
 
 logger = logging.getLogger(__name__)
 
@@ -161,6 +163,74 @@ class DetectionViewSet(viewsets.ModelViewSet):
             status=Detection.STATUS_COMPLETED
         ).aggregate(avg=Avg('confidence_score'))['avg'] or 0
         
+        # 添加按日期分组的数据统计
+        # 获取过去7天的日期范围
+        today = timezone.now().date()
+        dates = [(today - timedelta(days=i)) for i in range(6, -1, -1)]
+        
+        # 按日期分组查询数据 - 修复日期查询逻辑
+        # 不再使用日期过滤，而是分别计算每个日期的记录数
+        date_counts = {}
+        for date in dates:
+            start_date = datetime.combine(date, datetime.min.time())
+            end_date = datetime.combine(date, datetime.max.time())
+            start_date = timezone.make_aware(start_date)
+            end_date = timezone.make_aware(end_date)
+            
+            # 计算当天的检测数量
+            count = detections.filter(created_at__gte=start_date, created_at__lte=end_date).count()
+            date_counts[date.strftime('%Y-%m-%d')] = count
+        
+        # 如果所有日期的计数都是0，我们可能需要查看所有检测记录的日期分布
+        if all(count == 0 for count in date_counts.values()) and total_count > 0:
+            # 获取最早和最晚的检测记录日期
+            earliest = detections.order_by('created_at').first()
+            latest = detections.order_by('-created_at').first()
+            
+            if earliest and latest:
+                earliest_date = earliest.created_at.date()
+                latest_date = latest.created_at.date()
+                
+                # 计算所有检测记录的日期分布
+                real_date_counts = {}
+                date_range = []
+                for date in (earliest_date + timedelta(days=n) for n in range((latest_date - earliest_date).days + 1)):
+                    date_range.append(date)
+                    start_date = datetime.combine(date, datetime.min.time())
+                    end_date = datetime.combine(date, datetime.max.time())
+                    start_date = timezone.make_aware(start_date)
+                    end_date = timezone.make_aware(end_date)
+                    count = detections.filter(created_at__gte=start_date, created_at__lte=end_date).count()
+                    real_date_counts[date.strftime('%Y-%m-%d')] = count
+                
+                # 使用真实的日期分布，取最多7天数据
+                if len(date_range) > 0:
+                    # 最多取7天数据，优先取最近的数据
+                    if len(date_range) > 7:
+                        date_range = date_range[-7:]
+                    
+                    date_counts = {date.strftime('%Y-%m-%d'): real_date_counts.get(date.strftime('%Y-%m-%d'), 0) for date in date_range}
+                    dates = date_range
+        
+        # 生成最近日期的统计数据
+        weekly_trend = []
+        for date in dates:
+            date_str = date.strftime('%Y-%m-%d')
+            if date == today:
+                display_name = '今天'
+            elif date == today - timedelta(days=1):
+                display_name = '昨天'
+            else:
+                display_name = date_str
+                
+            weekly_trend.append({
+                'date': display_name,
+                'count': date_counts.get(date_str, 0)
+            })
+        
+        # 计算今日检测量
+        today_detections = date_counts.get(today.strftime('%Y-%m-%d'), 0)
+        
         # 构建统计响应
         stats = {
             'total_count': total_count,
@@ -171,7 +241,13 @@ class DetectionViewSet(viewsets.ModelViewSet):
             'failed_count': failed_count,
             'fake_percentage': fake_percentage,
             'real_percentage': real_percentage,
-            'average_confidence': avg_confidence
+            'average_confidence': avg_confidence,
+            'weekly_trend': weekly_trend,
+            'today_detections': today_detections,
+            'result_distribution': [
+                { 'name': '真实新闻', 'value': real_count },
+                { 'name': '虚假新闻', 'value': fake_count }
+            ]
         }
         
         return Response(stats)

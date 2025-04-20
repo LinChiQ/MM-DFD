@@ -49,7 +49,7 @@
               v-model="registerForm.password" 
               prefix-icon="el-icon-lock" 
               type="password" 
-              placeholder="密码 (至少6位)"
+              placeholder="密码 (至少8位)"
               class="custom-input"
             />
           </el-form-item>
@@ -95,8 +95,8 @@ export default {
     const validatePass = (rule, value, callback) => {
       if (value === '') {
         callback(new Error('请输入密码'))
-      } else if (value.length < 6) {
-        callback(new Error('密码长度不能小于6个字符'))
+      } else if (value.length < 8) {
+        callback(new Error('密码长度不能小于8个字符'))
       } else {
         if (this.registerForm.password2 !== '') {
           this.$refs.registerForm.validateField('password2')
@@ -170,7 +170,22 @@ export default {
             })
             .catch(error => {
               console.error('注册失败:', error)
-              this.$message.error('注册失败: ' + (error.response?.data?.detail || error.response?.data?.password2?.[0] || error.response?.data?.first_name?.[0] || error.response?.data?.last_name?.[0] || '用户名或邮箱可能已存在'))
+              if (error.response && error.response.data) {
+                const errorData = error.response.data;
+                if (errorData.password && Array.isArray(errorData.password)) {
+                  this.$message.error('密码错误: ' + errorData.password.join(', '));
+                } else if (errorData.detail) {
+                  this.$message.error(errorData.detail);
+                } else if (errorData.username) {
+                  this.$message.error('用户名错误: ' + errorData.username.join(', '));
+                } else if (errorData.email) {
+                  this.$message.error('邮箱错误: ' + errorData.email.join(', '));
+                } else {
+                  this.$message.error('注册失败，请检查输入信息');
+                }
+              } else {
+                this.$message.error('注册失败，请稍后重试');
+              }
             })
             .finally(() => {
               this.loading = false

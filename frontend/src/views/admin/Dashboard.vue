@@ -213,30 +213,26 @@ export default {
             totalUsers: data.total_count || 0,
             totalDetections: data.total_count || 0,
             fakeNewsRatio: data.fake_percentage ? Math.round(data.fake_percentage) : 0,
-            todayDetections: data.completed_count || 0
+            todayDetections: data.today_detections || 0
           };
           
-          // 创建周趋势数据（因API未提供，创建模拟数据）
-          if (!data.weekly_trend) {
-            // 修改：只使用当前有的数据创建柱状图，不使用随机数据
-            const todayData = {
-              date: '今日检测量',
-              count: this.statistics.todayDetections
-            };
-            this.updateWeeklyTrendChart([todayData]);
-          } else {
+          // 更新周趋势图表
+          if (data.weekly_trend && data.weekly_trend.length > 0) {
             this.updateWeeklyTrendChart(data.weekly_trend);
+          } else {
+            // 如果后端未提供周趋势数据，则使用空数组
+            this.updateWeeklyTrendChart([]);
           }
           
-          // 创建结果分布数据
-          if (!data.result_distribution) {
+          // 更新结果分布图表
+          if (data.result_distribution && data.result_distribution.length > 0) {
+            this.updateResultDistributionChart(data.result_distribution);
+          } else {
             const resultDistribution = [
               { name: '真实新闻', value: data.real_count || 0 },
               { name: '虚假新闻', value: data.fake_count || 0 }
             ];
             this.updateResultDistributionChart(resultDistribution);
-          } else {
-            this.updateResultDistributionChart(data.result_distribution);
           }
         })
         .catch(error => {
@@ -289,10 +285,15 @@ export default {
     
     // 更新周趋势图表
     updateWeeklyTrendChart(data) {
-      // 修改：不再使用默认的7天数据
       if (!data || data.length === 0) {
         data = [
-          { date: '今日检测量', count: 0 }
+          { date: '今天', count: 0 },
+          { date: '昨天', count: 0 },
+          { date: '前天', count: 0 },
+          { date: new Date(Date.now() - 3*24*60*60*1000).toLocaleDateString(), count: 0 },
+          { date: new Date(Date.now() - 4*24*60*60*1000).toLocaleDateString(), count: 0 },
+          { date: new Date(Date.now() - 5*24*60*60*1000).toLocaleDateString(), count: 0 },
+          { date: new Date(Date.now() - 6*24*60*60*1000).toLocaleDateString(), count: 0 }
         ];
       }
       

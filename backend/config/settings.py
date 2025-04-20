@@ -12,7 +12,6 @@ BASE_DIR = Path(__file__).resolve().parent.parent
 dotenv_path = BASE_DIR / '.env'
 load_dotenv(dotenv_path=dotenv_path)
 print(f"DEBUG: Attempted loading .env from {dotenv_path}") # 添加更详细的调试信息
-print(f"DEBUG: Loaded OPENROUTER_API_KEY = {os.getenv('OPENROUTER_API_KEY')}")
 
 # 构建路径
 # BASE_DIR = Path(__file__).resolve().parent.parent 

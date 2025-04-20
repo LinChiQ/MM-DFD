@@ -5,6 +5,8 @@ from rest_framework import viewsets, status, permissions
 from rest_framework.decorators import action
 from rest_framework.response import Response
 from django.contrib.auth import get_user_model
+# 导入 django-filter backend
+from django_filters.rest_framework import DjangoFilterBackend 
 from .serializers import (
     UserSerializer, UserRegistrationSerializer, 
     UserDetailSerializer, PasswordChangeSerializer
@@ -14,13 +16,17 @@ User = get_user_model()
 
 class IsOwnerOrReadOnly(permissions.BasePermission):
     """
-    对象级权限，只允许对象的所有者编辑
+    对象级权限，只允许对象的所有者编辑，但管理员可以编辑任何对象。
     """
     def has_object_permission(self, request, view, obj):
         # 读取权限允许任何请求
         if request.method in permissions.SAFE_METHODS:
             return True
         
+        # 管理员具有所有写入权限
+        if request.user and request.user.is_staff:
+            return True
+            
         # 写入权限只允许对象的所有者
         return obj == request.user
 
@@ -28,9 +34,12 @@ class UserViewSet(viewsets.ModelViewSet):
     """
     用户视图集，处理用户相关操作
     """
-    queryset = User.objects.all()
+    queryset = User.objects.all().order_by('-date_joined') # 默认按加入时间降序
     serializer_class = UserSerializer
     permission_classes = [permissions.IsAuthenticated, IsOwnerOrReadOnly]
+    # 添加过滤后端和过滤字段
+    filter_backends = [DjangoFilterBackend]
+    filterset_fields = ['username', 'email', 'is_active'] # 允许按这些字段过滤
     
     def get_serializer_class(self):
         """

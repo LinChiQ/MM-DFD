@@ -410,6 +410,7 @@ export default {
           
           if (this.dialogType === 'create') {
             formData.password = this.userForm.password;
+            formData.password2 = this.userForm.confirmPassword;
             
             axios.post('/users/', formData)
               .then(() => {
@@ -419,8 +420,41 @@ export default {
                 this.submitting = false;
               })
               .catch(error => {
-                console.error('创建用户失败:', error);
-                this.$message.error('创建用户失败: ' + (error.response?.data?.detail || '未知错误'));
+                console.error('创建用户失败:', error.response || error);
+                let errorMessage = '创建用户失败';
+                if (error.response && error.response.data) {
+                  const errors = error.response.data;
+                  const errorDetails = [];
+                  if (typeof errors === 'object' && errors !== null) {
+                    for (const field in errors) {
+                      if (Array.isArray(errors[field])) {
+                        if (field === 'password') {
+                          const processedErrors = errors[field].map(err => {
+                            if (err.includes('too short')) return '密码太短 (至少8字符)';
+                            if (err.includes('too common')) return '密码太常见';
+                            if (err.includes('entirely numeric')) return '密码不能全是数字';
+                            return err;
+                          });
+                          errorDetails.push(`密码: ${processedErrors.join(', ')}`);
+                        } else {
+                          errorDetails.push(`${field}: ${errors[field].join(', ')}`);
+                        }
+                      } else {
+                         errorDetails.push(`${field}: ${errors[field]}`);
+                      }
+                    }
+                    if (errorDetails.length > 0) {
+                       errorMessage += ': ' + errorDetails.join('; ');
+                    } else if (errors.detail) {
+                       errorMessage += ': ' + errors.detail;
+                    }
+                  } else if (typeof errors === 'string') {
+                     errorMessage += ': ' + errors;
+                  }
+                } else if (error.message) {
+                   errorMessage += ': ' + error.message;
+                }
+                this.$message.error(errorMessage);
                 this.submitting = false;
               });
           } else {
