@@ -586,7 +586,7 @@ export default {
   background-color: #fef0f0;
 }
 
-// Add style to align progress text
+
 .recent-detection-card .el-progress__text {
   text-align: right;
   display: inline-block;
